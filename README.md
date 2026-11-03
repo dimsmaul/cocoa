@@ -1,6 +1,9 @@
-# Cocoa 🍫 - Native macOS Focus & Task Companion
-
-Cocoa is a lightweight, high-performance native macOS focus and task manager engineered in **Swift (SwiftUI + AppKit)**, featuring MacBook Notch Dynamic Island integration, a glassmorphic Floating Tower, a Kanban board, Pomodoro focus sessions, local-first storage, Supabase cloud sync, and an embedded Model Context Protocol (MCP) server.
+<div align="center">
+  <img src="Resources/CocoaLogo.png" width="140" height="140" alt="Cocoa Logo" />
+  <h1>Cocoa 🍫</h1>
+  <p><strong>Native macOS Focus & Task Companion</strong></p>
+  <p>Engineered with Swift 6, SwiftUI & AppKit · Dynamic Island · Floating Tower · Local-First · Supabase Sync · Native MCP Server</p>
+</div>
 
 ---
 
@@ -85,7 +88,7 @@ Cocoa is local-first by default. To enable cross-device cloud sync:
 
 ---
 
-## Build & Run
+## Build & Release
 
 ### Prerequisites
 - macOS 14.0 (Sonoma) or newer
@@ -103,6 +106,9 @@ open Cocoa.app
 cd Cocoa
 swift run
 ```
+
+### Automated CI/CD & DMG Releases:
+Every release tag (e.g. `v1.0.0`) pushed to GitHub automatically triggers the GitHub Actions workflow to build and package `Cocoa.dmg` as a downloadable GitHub Release asset.
 
 ---
 
