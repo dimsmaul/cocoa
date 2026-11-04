@@ -3,6 +3,7 @@ import SwiftUI
 public struct SidebarView: View {
     @Bindable var taskStore: TaskStore
     @State private var isShowingNewListSheet = false
+    @State private var editingList: EditableListTarget? = nil
 
     public init(taskStore: TaskStore) {
         self.taskStore = taskStore
@@ -46,7 +47,17 @@ public struct SidebarView: View {
                             .contentShape(Rectangle())
                         }
                         .contextMenu {
+                            Button {
+                                editingList = EditableListTarget(
+                                    name: list,
+                                    color: taskStore.listColors[list] ?? "orange"
+                                )
+                            } label: {
+                                Label("Edit '\(list)'...", systemImage: "pencil")
+                            }
+
                             if list != "General" {
+                                Divider()
                                 Button(role: .destructive) {
                                     taskStore.deleteList(name: list)
                                 } label: {
@@ -103,9 +114,18 @@ public struct SidebarView: View {
             .background(Color.primary.opacity(0.03))
         }
         .sheet(isPresented: $isShowingNewListSheet) {
-            NewListDialogView(taskStore: taskStore, onClose: {
+            NewListDialogView(taskStore: taskStore, mode: .create, onClose: {
                 isShowingNewListSheet = false
             })
+        }
+        .sheet(item: $editingList) { target in
+            NewListDialogView(
+                taskStore: taskStore,
+                mode: .edit(originalName: target.name, currentColor: target.color),
+                onClose: {
+                    editingList = nil
+                }
+            )
         }
     }
 

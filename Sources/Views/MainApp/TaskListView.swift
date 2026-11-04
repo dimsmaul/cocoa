@@ -7,6 +7,7 @@ public struct TaskListView: View {
     @State private var newTaskTitle: String = ""
     @State private var newEstimatedMinutes: Int = 25
     @State private var newPriority: TaskPriority = .medium
+    @State private var editingList: EditableListTarget? = nil
     @FocusState private var isInputFocused: Bool
 
     public init(taskStore: TaskStore, timerManager: TimerManager) {
@@ -26,8 +27,28 @@ public struct TaskListView: View {
             // Header Bar
             HStack(alignment: .center) {
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(sectionTitle)
-                        .font(.system(size: 20, weight: .bold))
+                    HStack(spacing: 8) {
+                        Text(sectionTitle)
+                            .font(.system(size: 20, weight: .bold))
+
+                        if case .list(let listName) = taskStore.selectedSection {
+                            Button(action: {
+                                editingList = EditableListTarget(
+                                    name: listName,
+                                    color: taskStore.listColors[listName] ?? "orange"
+                                )
+                            }) {
+                                Image(systemName: "pencil")
+                                    .font(.system(size: 11, weight: .semibold))
+                                    .foregroundStyle(.secondary)
+                                    .padding(4)
+                                    .background(Color.primary.opacity(0.06))
+                                    .clipShape(Circle())
+                            }
+                            .buttonStyle(.plain)
+                            .help("Edit List '\(listName)'")
+                        }
+                    }
 
                     Text("\(taskStore.filteredTasks.count) tasks")
                         .font(.system(size: 11))
@@ -98,6 +119,15 @@ public struct TaskListView: View {
             quickAddBar
                 .padding(14)
                 .background(Color.primary.opacity(0.02))
+        }
+        .sheet(item: $editingList) { target in
+            NewListDialogView(
+                taskStore: taskStore,
+                mode: .edit(originalName: target.name, currentColor: target.color),
+                onClose: {
+                    editingList = nil
+                }
+            )
         }
     }
 

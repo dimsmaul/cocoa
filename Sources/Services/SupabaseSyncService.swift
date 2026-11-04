@@ -4,6 +4,18 @@ import Supabase
 import Foundation
 import Supabase
 
+public struct CocoaListDTO: Codable, Sendable {
+    public let name: String
+    public let color: String
+
+    public init(name: String, color: String) {
+        self.name = name
+        self.color = color
+    }
+}
+
+public let CocoaListsMetadataUUID = UUID(uuidString: "00000000-0000-0000-0000-000000000001")!
+
 public struct SupabaseTaskDTO: Codable, Sendable {
     public let id: UUID
     public var title: String
@@ -31,6 +43,34 @@ public struct SupabaseTaskDTO: Codable, Sendable {
         case completed_at
         case created_at
         case due_date
+    }
+
+    public init(
+        id: UUID,
+        title: String,
+        notes: String = "",
+        estimatedMinutes: Int = 0,
+        timeSpentSeconds: Int = 0,
+        isCompleted: Bool = false,
+        board: String = "Backlog",
+        priority: String = "Low",
+        listName: String = "General",
+        completedAt: Date? = nil,
+        createdAt: Date = Date(),
+        dueDate: Date? = nil
+    ) {
+        self.id = id
+        self.title = title
+        self.notes = notes
+        self.estimated_minutes = estimatedMinutes
+        self.time_spent_seconds = timeSpentSeconds
+        self.is_completed = isCompleted
+        self.board = board
+        self.priority = priority
+        self.list_name = listName
+        self.completed_at = completedAt
+        self.created_at = createdAt
+        self.due_date = dueDate
     }
 
     public init(from task: TaskItem) {
@@ -146,6 +186,7 @@ public final class SupabaseSyncService: @unchecked Sendable {
 
     private var client: SupabaseClient?
     public var supportsDueDate: Bool = false
+    public var supportsListsTable: Bool = false
     public var isSchemaMigrated: Bool = false
 
     private init() {
@@ -191,12 +232,14 @@ public final class SupabaseSyncService: @unchecked Sendable {
             let (data, response) = try await URLSession.shared.data(for: request)
             if let httpResp = response as? HTTPURLResponse, (200...299).contains(httpResp.statusCode) {
                 if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-                   let definitions = json["definitions"] as? [String: Any],
-                   let tasksDef = definitions["tasks"] as? [String: Any],
-                   let properties = tasksDef["properties"] as? [String: Any] {
-                    self.supportsDueDate = properties["due_date"] != nil
+                   let definitions = json["definitions"] as? [String: Any] {
+                    if let tasksDef = definitions["tasks"] as? [String: Any],
+                       let properties = tasksDef["properties"] as? [String: Any] {
+                        self.supportsDueDate = properties["due_date"] != nil
+                    }
+                    self.supportsListsTable = definitions["lists"] != nil
                     self.isSchemaMigrated = true
-                    print("[SupabaseSync] Database schema validated. supportsDueDate=\(self.supportsDueDate)")
+                    print("[SupabaseSync] Database schema validated. supportsDueDate=\(self.supportsDueDate), supportsListsTable=\(self.supportsListsTable)")
                     return
                 }
             }
@@ -256,7 +299,100 @@ public final class SupabaseSyncService: @unchecked Sendable {
             .execute()
             .value
 
-        return dtos.map { $0.toTaskItem() }
+        // Exclude system metadata records from normal tasks
+        let userDtos = dtos.filter { $0.id != CocoaListsMetadataUUID && !$0.title.hasPrefix("[Cocoa:ListsMetadata]") }
+        return userDtos.map { $0.toTaskItem() }
+    }
+
+    public func pushLists(_ lists: [String], listColors: [String: String]) async throws {
+        configureClient()
+        guard let client else { return }
+
+        let dtos = lists.map { CocoaListDTO(name: $0, color: listColors[$0] ?? "orange") }
+        guard let jsonData = try? JSONEncoder().encode(dtos),
+              let jsonStr = String(data: jsonData, encoding: .utf8) else { return }
+
+        // 1. If dedicated lists table exists in Supabase, upsert into it
+        if supportsListsTable {
+            _ = try? await client
+                .from("lists")
+                .upsert(dtos)
+                .execute()
+        }
+
+        // 2. Always persist to system metadata record in tasks table so cross-device sync works seamlessly
+        let metaTask = SupabaseTaskDTO(
+            id: CocoaListsMetadataUUID,
+            title: "[Cocoa:ListsMetadata]",
+            notes: jsonStr,
+            estimatedMinutes: 0,
+            timeSpentSeconds: 0,
+            isCompleted: false,
+            board: "Backlog",
+            priority: "Low",
+            listName: "System",
+            completedAt: nil,
+            createdAt: Date(),
+            dueDate: nil
+        )
+
+        try await client
+            .from("tasks")
+            .upsert(metaTask)
+            .execute()
+    }
+
+    public func fetchLists() async throws -> [CocoaListDTO] {
+        configureClient()
+        guard let client else { return [] }
+
+        if !isSchemaMigrated {
+            try? await ensureSchemaMigrated()
+        }
+
+        // 1. Try fetching from dedicated lists table if supported
+        if supportsListsTable {
+            if let lists: [CocoaListDTO] = try? await client
+                .from("lists")
+                .select()
+                .execute()
+                .value, !lists.isEmpty {
+                return lists
+            }
+        }
+
+        // 2. Fallback: fetch from tasks system metadata record
+        do {
+            let metaQuery: [SupabaseTaskDTO] = try await client
+                .from("tasks")
+                .select()
+                .eq("id", value: CocoaListsMetadataUUID.uuidString)
+                .execute()
+                .value
+
+            if let metaRecord = metaQuery.first,
+               let data = metaRecord.notes.data(using: .utf8),
+               let lists = try? JSONDecoder().decode([CocoaListDTO].self, from: data) {
+                return lists
+            }
+        } catch {
+            print("[SupabaseSync] Notice fetching list metadata:", error.localizedDescription)
+        }
+
+        return []
+    }
+
+    public func deleteRemoteList(name: String) async throws {
+        configureClient()
+        guard let client else { return }
+
+        if supportsListsTable {
+            _ = try? await client
+                .from("lists")
+                .delete()
+                .eq("name", value: name)
+                .execute()
+        }
     }
 
     public func deleteTask(id: UUID) async throws {

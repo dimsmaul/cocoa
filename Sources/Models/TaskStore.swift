@@ -302,6 +302,45 @@ public final class TaskStore: @unchecked Sendable {
         listColors[trimmed] = color
         saveListsMetadata()
         save()
+        scheduleListsCloudPush()
+    }
+
+    public func updateList(oldName: String, newName: String, newColor: String) {
+        let trimmedOld = oldName.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedNew = newName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedOld.isEmpty, !trimmedNew.isEmpty else { return }
+
+        // If renamed and newName already exists (other than itself), return
+        if trimmedNew != trimmedOld && lists.contains(trimmedNew) {
+            return
+        }
+
+        // Update list name in lists array
+        if let idx = lists.firstIndex(of: trimmedOld) {
+            lists[idx] = trimmedNew
+        } else if !lists.contains(trimmedNew) {
+            lists.append(trimmedNew)
+        }
+
+        // Update color
+        listColors.removeValue(forKey: trimmedOld)
+        listColors[trimmedNew] = newColor
+
+        // Update all tasks belonging to oldName
+        if trimmedNew != trimmedOld {
+            for i in tasks.indices {
+                if tasks[i].listName == trimmedOld {
+                    tasks[i].listName = trimmedNew
+                }
+            }
+            if case .list(let selectedList) = selectedSection, selectedList == trimmedOld {
+                selectedSection = .list(trimmedNew)
+            }
+        }
+
+        saveListsMetadata()
+        save()
+        scheduleListsCloudPush()
     }
 
     public func deleteList(name: String) {
@@ -318,6 +357,43 @@ public final class TaskStore: @unchecked Sendable {
         }
         saveListsMetadata()
         save()
+        scheduleListsCloudPush()
+
+        if AppSettings.shared.isCloudSyncEnabled && AppSettings.shared.isSupabaseConfigured {
+            Task {
+                try? await SupabaseSyncService.shared.deleteRemoteList(name: name)
+            }
+        }
+    }
+
+    public func scheduleListsCloudPush() {
+        guard AppSettings.shared.isCloudSyncEnabled && AppSettings.shared.isSupabaseConfigured else { return }
+        Task { [weak self] in
+            guard let self else { return }
+            do {
+                try await SupabaseSyncService.shared.pushLists(self.lists, listColors: self.listColors)
+            } catch {
+                print("[TaskStore] Cloud list push notice:", error.localizedDescription)
+            }
+        }
+    }
+
+    public func mergeRemoteLists(_ remoteLists: [CocoaListDTO]) {
+        guard !remoteLists.isEmpty else { return }
+        var hasChanges = false
+        for item in remoteLists {
+            if !lists.contains(item.name) {
+                lists.append(item.name)
+                hasChanges = true
+            }
+            if listColors[item.name] != item.color {
+                listColors[item.name] = item.color
+                hasChanges = true
+            }
+        }
+        if hasChanges {
+            saveListsMetadata()
+        }
     }
 
     public func saveListsMetadata() {
@@ -378,6 +454,15 @@ public final class TaskStore: @unchecked Sendable {
             guard let self else { return }
             do {
                 try await SupabaseSyncService.shared.ensureSchemaMigrated()
+
+                // 1. Sync custom lists and colors with Supabase
+                try await SupabaseSyncService.shared.pushLists(self.lists, listColors: self.listColors)
+                let remoteLists = try await SupabaseSyncService.shared.fetchLists()
+                await MainActor.run {
+                    self.mergeRemoteLists(remoteLists)
+                }
+
+                // 2. Sync tasks
                 try await SupabaseSyncService.shared.pushTasks(self.tasks)
                 let remote = try await SupabaseSyncService.shared.fetchTasks()
                 await MainActor.run {
