@@ -26,8 +26,10 @@ public final class TaskStore: @unchecked Sendable {
     public var selectedSection: SidebarSection = .board(.today)
     public var searchQuery: String = ""
     public var viewMode: TaskViewMode = .list
+    public var deletedTaskIds: Set<UUID> = []
 
     private let saveURL: URL
+    private let hasInitializedKey = "CocoaHasInitializedTasks"
     private var isMergingRemote = false
     private var syncDebounceTask: Task<Void, Never>? = nil
 
@@ -41,9 +43,19 @@ public final class TaskStore: @unchecked Sendable {
 
         load()
         loadListsMetadata()
-        if tasks.isEmpty {
+        loadDeletedTaskIds()
+
+        let hasInitialized = UserDefaults.standard.bool(forKey: hasInitializedKey)
+        let fileExists = fileManager.fileExists(atPath: saveURL.path)
+
+        // Only seed sample tasks on the very first fresh install when no saved tasks file exists
+        if !hasInitialized && !fileExists {
             loadInitialSampleTasks()
+            UserDefaults.standard.set(true, forKey: hasInitializedKey)
+        } else if !hasInitialized {
+            UserDefaults.standard.set(true, forKey: hasInitializedKey)
         }
+
         if activeTaskId == nil {
             activeTaskId = tasks.first(where: { !$0.isCompleted })?.id
         }
@@ -224,6 +236,9 @@ public final class TaskStore: @unchecked Sendable {
 
     public func deleteTask(id: UUID) {
         tasks.removeAll(where: { $0.id == id })
+        deletedTaskIds.insert(id)
+        saveDeletedTaskIds()
+
         if activeTaskId == id {
             activeTaskId = tasks.first(where: { !$0.isCompleted })?.id
         }
@@ -231,6 +246,17 @@ public final class TaskStore: @unchecked Sendable {
             selectedTaskId = activeTaskId
         }
         save()
+
+        // Immediately propagate deletion to Supabase cloud
+        if AppSettings.shared.isCloudSyncEnabled && AppSettings.shared.isSupabaseConfigured {
+            Task {
+                do {
+                    try await SupabaseSyncService.shared.deleteTask(id: id)
+                } catch {
+                    print("[TaskStore] Cloud delete error:", error.localizedDescription)
+                }
+            }
+        }
     }
 
     public func updateNotes(for taskId: UUID, notes: String) {
@@ -368,8 +394,18 @@ public final class TaskStore: @unchecked Sendable {
         isMergingRemote = true
         defer { isMergingRemote = false }
 
+        // Filter out tasks deleted locally to prevent resurrection
+        let validRemote = remote.filter { !deletedTaskIds.contains($0.id) }
+
+        // Also clean up remote if it contains any tasks previously deleted locally
+        for r in remote where deletedTaskIds.contains(r.id) {
+            Task {
+                try? await SupabaseSyncService.shared.deleteTask(id: r.id)
+            }
+        }
+
         var hasChanges = false
-        for r in remote {
+        for r in validRemote {
             if let index = tasks.firstIndex(where: { $0.id == r.id }) {
                 if tasks[index].title != r.title ||
                    tasks[index].isCompleted != r.isCompleted ||
@@ -404,6 +440,17 @@ public final class TaskStore: @unchecked Sendable {
             } catch {
                 print("[TaskStore] Failed to save merged tasks:", error)
             }
+        }
+    }
+
+    private func saveDeletedTaskIds() {
+        let stringArray = deletedTaskIds.map { $0.uuidString }
+        UserDefaults.standard.set(stringArray, forKey: "CocoaDeletedTaskIds")
+    }
+
+    private func loadDeletedTaskIds() {
+        if let stringArray = UserDefaults.standard.stringArray(forKey: "CocoaDeletedTaskIds") {
+            self.deletedTaskIds = Set(stringArray.compactMap { UUID(uuidString: $0) })
         }
     }
 
