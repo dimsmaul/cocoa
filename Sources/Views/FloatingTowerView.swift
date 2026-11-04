@@ -86,17 +86,6 @@ public struct FloatingTowerView: View {
     // MARK: - Header Bar
     private var headerBar: some View {
         HStack(spacing: 8) {
-            if let logoImage = NSImage(contentsOf: Bundle.main.bundleURL.appendingPathComponent("Contents/Resources/CocoaLogo.png")) {
-                Image(nsImage: logoImage)
-                    .resizable()
-                    .aspectRatio(contentMode: .fit)
-                    .frame(width: 18, height: 18)
-                    .clipShape(RoundedRectangle(cornerRadius: 4, style: .continuous))
-            } else {
-                Text("🍫")
-                    .font(.system(size: 16))
-            }
-
             Text("Cocoa")
                 .font(.system(size: 14, weight: .bold))
 
