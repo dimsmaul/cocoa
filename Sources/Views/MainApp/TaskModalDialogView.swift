@@ -110,8 +110,9 @@ public struct TaskModalDialogView: View {
                 .padding(20)
             }
         }
-        .frame(width: 560, height: 620)
-        .background(.regularMaterial)
+        .frame(width: 560, height: 600)
+        .background(Color(NSColor.windowBackgroundColor))
+        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
     }
 
     // MARK: - Task Fields Section

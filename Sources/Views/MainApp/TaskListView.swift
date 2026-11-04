@@ -178,8 +178,6 @@ public struct TaskListView: View {
     }
 
     private func taskCard(task: TaskItem) -> some View {
-        let isSelected = task.id == taskStore.selectedTaskId
-
         return HStack(spacing: 12) {
             // Checkbox
             Button(action: {
@@ -264,7 +262,7 @@ public struct TaskListView: View {
         .padding(.vertical, 9)
         .background(
             RoundedRectangle(cornerRadius: 10)
-                .fill(isSelected ? Color.primary.opacity(0.08) : Color.primary.opacity(0.03))
+                .fill(Color.primary.opacity(0.03))
         )
         .contentShape(Rectangle())
         .onTapGesture {

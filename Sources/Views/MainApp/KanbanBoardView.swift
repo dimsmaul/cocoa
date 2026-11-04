@@ -233,8 +233,6 @@ public struct KanbanBoardView: View {
 
     // MARK: - Kanban Card View
     private func kanbanCard(task: TaskItem) -> some View {
-        let isSelected = task.id == taskStore.selectedTaskId
-
         return VStack(alignment: .leading, spacing: 8) {
             // Top Row: Checkbox, Title & Move Menu
             HStack(alignment: .top, spacing: 8) {
@@ -345,10 +343,10 @@ public struct KanbanBoardView: View {
         .padding(10)
         .background(
             RoundedRectangle(cornerRadius: 10)
-                .fill(isSelected ? Color.primary.opacity(0.09) : Color.primary.opacity(0.04))
+                .fill(Color.primary.opacity(0.04))
                 .overlay(
                     RoundedRectangle(cornerRadius: 10)
-                        .strokeBorder(Color.white.opacity(isSelected ? 0.10 : 0.05), lineWidth: 1)
+                        .strokeBorder(Color.white.opacity(0.05), lineWidth: 1)
                 )
         )
         .contentShape(Rectangle())

@@ -130,24 +130,56 @@ public struct MainAppView: View {
             }
         }
         .preferredColorScheme(.dark)
-        .sheet(item: $modalTask) { task in
-            TaskModalDialogView(
-                task: task,
-                taskStore: taskStore,
-                timerManager: timerManager,
-                onClose: {
-                    modalTask = nil
-                },
-                onLaunchNotchMode: {
-                    modalTask = nil
-                    onLaunchNotchMode()
-                },
-                onLaunchTowerMode: {
-                    modalTask = nil
-                    onLaunchTowerMode()
+        .overlay {
+            if let task = modalTask {
+                ZStack {
+                    // Dimmed backdrop: clicking outside the card dismisses/hides the dialog!
+                    Color.black.opacity(0.50)
+                        .ignoresSafeArea()
+                        .contentShape(Rectangle())
+                        .onTapGesture {
+                            withAnimation(.easeInOut(duration: 0.16)) {
+                                modalTask = nil
+                            }
+                        }
+
+                    // Dialog Card
+                    TaskModalDialogView(
+                        task: task,
+                        taskStore: taskStore,
+                        timerManager: timerManager,
+                        onClose: {
+                            withAnimation(.easeInOut(duration: 0.16)) {
+                                modalTask = nil
+                            }
+                        },
+                        onLaunchNotchMode: {
+                            withAnimation(.easeInOut(duration: 0.16)) {
+                                modalTask = nil
+                            }
+                            onLaunchNotchMode()
+                        },
+                        onLaunchTowerMode: {
+                            withAnimation(.easeInOut(duration: 0.16)) {
+                                modalTask = nil
+                            }
+                            onLaunchTowerMode()
+                        }
+                    )
+                    .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 16, style: .continuous)
+                            .strokeBorder(Color.white.opacity(0.12), lineWidth: 1)
+                    )
+                    .shadow(color: .black.opacity(0.6), radius: 32, x: 0, y: 16)
+                    .contentShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                    .onTapGesture {
+                        // Absorb clicks inside dialog card
+                    }
                 }
-            )
-            .preferredColorScheme(.dark)
+                .transition(.opacity.combined(with: .scale(scale: 0.98)))
+            }
         }
+        .animation(.easeInOut(duration: 0.18), value: modalTask != nil)
     }
 }
