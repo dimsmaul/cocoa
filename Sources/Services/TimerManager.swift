@@ -86,10 +86,11 @@ public final class TimerManager: @unchecked Sendable {
     public func completeCurrentSession() {
         stopTicker()
         state = .completed
-        SoundManager.shared.playCompletionSound()
 
         if let active = taskStore?.activeTask {
             taskStore?.toggleCompleted(id: active.id)
+        } else {
+            SoundManager.shared.playSuccessSound()
         }
 
         // Reset for next task

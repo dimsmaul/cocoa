@@ -200,6 +200,10 @@ public final class TaskStore: @unchecked Sendable {
         tasks[index].completedAt = tasks[index].isCompleted ? Date() : nil
         tasks[index].board = tasks[index].isCompleted ? .done : (tasks[index].dueDate != nil ? (Calendar.current.isDateInToday(tasks[index].dueDate!) ? .today : .upcoming) : .backlog)
 
+        if tasks[index].isCompleted {
+            SoundManager.shared.playSuccessSound()
+        }
+
         if activeTaskId == id && tasks[index].isCompleted {
             activeTaskId = tasks.first(where: { !$0.isCompleted })?.id
         }

@@ -185,7 +185,7 @@ public struct SettingsView: View {
 
     // MARK: - Content Header Bar
     private var contentHeaderBar: some View {
-        HStack {
+        HStack(alignment: .center) {
             VStack(alignment: .leading, spacing: 2) {
                 Text(selectedCategory.rawValue)
                     .font(.system(size: 18, weight: .bold))
@@ -193,6 +193,7 @@ public struct SettingsView: View {
                 Text(categorySubtitle(selectedCategory))
                     .font(.system(size: 11))
                     .foregroundStyle(.secondary)
+                    .lineLimit(1)
             }
 
             Spacer()
@@ -207,7 +208,7 @@ public struct SettingsView: View {
             }
         }
         .padding(.horizontal, 24)
-        .padding(.vertical, 16)
+        .frame(height: 64)
     }
 
     private func categorySubtitle(_ category: SettingsCategory) -> String {
@@ -215,19 +216,18 @@ public struct SettingsView: View {
         case .database: return "Configure Supabase multi-device sync or offline storage."
         case .timer: return "Customize Pomodoro durations, breaks, and audio cues."
         case .notch: return "Tailor MacBook camera notch integration and interaction behavior."
-        case .aiAndMcp: return "Model Context Protocol (MCP) server & AI assistant provider settings."
+        case .aiAndMcp: return "MCP server & AI assistant provider settings."
         case .about: return "Cocoa version, system statistics, and keyboard shortcuts."
         }
     }
 
     // MARK: - 1. AI & MCP Server View
+    @ViewBuilder
     private var aiAndMCPSettingsView: some View {
-        VStack(alignment: .leading, spacing: 18) {
-            if aiSubTab == 0 {
-                mcpServerSection
-            } else {
-                aiAssistantSection
-            }
+        if aiSubTab == 0 {
+            mcpServerSection
+        } else {
+            aiAssistantSection
         }
     }
 
@@ -863,29 +863,148 @@ public struct SettingsView: View {
 
             // Audio & Feedback Card
             settingsCard {
-                VStack(alignment: .leading, spacing: 14) {
+                VStack(alignment: .leading, spacing: 16) {
                     cardSectionTitle("AUDIO & ALERTS", icon: "speaker.wave.2.fill")
 
-                    Toggle("Play Sound on Session Completion", isOn: $settings.soundEnabled)
-                        .toggleStyle(.switch)
-                        .font(.system(size: 13, weight: .medium))
-
-                    if settings.soundEnabled {
-                        VStack(alignment: .leading, spacing: 6) {
-                            Text("Test Audio Cues:")
+                    // Master Toggle
+                    HStack(spacing: 12) {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Enable Sound Effects")
+                                .font(.system(size: 13, weight: .semibold))
+                            Text("Play sound effects during focus sessions, tasks, and notifications.")
                                 .font(.system(size: 11))
                                 .foregroundStyle(.secondary)
+                        }
 
-                            HStack(spacing: 8) {
-                                soundTestButton("Glass 🥂", soundName: "Glass")
-                                soundTestButton("Ping 🔔", soundName: "Ping")
-                                soundTestButton("Tink 🥢", soundName: "Tink")
-                                soundTestButton("Hero 🎺", soundName: "Hero")
+                        Spacer()
+
+                        Toggle("", isOn: $settings.soundEnabled)
+                            .toggleStyle(.switch)
+                            .labelsHidden()
+                    }
+
+                    if settings.soundEnabled {
+                        Divider().opacity(0.12)
+
+                        // 1. Success Sound Effect
+                        soundEffectRow(
+                            title: "Success Sound Effect",
+                            subtitle: "Triggered on task completion or successful Pomodoro session",
+                            icon: "checkmark.seal.fill",
+                            iconColor: .green,
+                            isEnabled: $settings.isSuccessSoundEnabled,
+                            selectedSound: $settings.successSound
+                        )
+
+                        Divider().opacity(0.12)
+
+                        // 2. Alert During Tasks
+                        soundEffectRow(
+                            title: "Alert During Tasks",
+                            subtitle: "Triggered during task interval reminders or focus alert cues",
+                            icon: "bell.badge.fill",
+                            iconColor: .orange,
+                            isEnabled: $settings.isTaskAlertSoundEnabled,
+                            selectedSound: $settings.taskAlertSound
+                        )
+
+                        Divider().opacity(0.12)
+
+                        // 3. Notification Alert
+                        soundEffectRow(
+                            title: "Notification Alert",
+                            subtitle: "Triggered on AI assistant responses, sync events, and alerts",
+                            icon: "bubble.left.and.exclamationmark.bubble.right.fill",
+                            iconColor: .purple,
+                            isEnabled: $settings.isNotificationSoundEnabled,
+                            selectedSound: $settings.notificationSound
+                        )
+
+                        Divider().opacity(0.12)
+
+                        // Quick Audition Pill Bar
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("Quick Sound Audition:")
+                                .font(.system(size: 11, weight: .medium))
+                                .foregroundStyle(.secondary)
+
+                            ScrollView(.horizontal, showsIndicators: false) {
+                                HStack(spacing: 8) {
+                                    ForEach(SoundManager.availableSounds) { sound in
+                                        soundTestButton("\(sound.name) \(sound.emoji)", soundName: sound.id)
+                                    }
+                                }
                             }
                         }
-                        .padding(.top, 4)
+                        .padding(.top, 2)
                     }
                 }
+            }
+        }
+    }
+
+    private func soundEffectRow(
+        title: String,
+        subtitle: String,
+        icon: String,
+        iconColor: Color,
+        isEnabled: Binding<Bool>,
+        selectedSound: Binding<String>
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 12) {
+                ZStack {
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .fill(iconColor.opacity(0.15))
+                        .frame(width: 30, height: 30)
+                    Image(systemName: icon)
+                        .font(.system(size: 14))
+                        .foregroundStyle(iconColor)
+                }
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(title)
+                        .font(.system(size: 13, weight: .semibold))
+                    Text(subtitle)
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                }
+
+                Spacer()
+
+                Toggle("", isOn: isEnabled)
+                    .toggleStyle(.switch)
+                    .labelsHidden()
+            }
+
+            if isEnabled.wrappedValue {
+                HStack(spacing: 10) {
+                    Picker("", selection: selectedSound) {
+                        ForEach(SoundManager.availableSounds) { sound in
+                            Text("\(sound.emoji)  \(sound.name) — \(sound.description)")
+                                .tag(sound.id)
+                        }
+                    }
+                    .pickerStyle(.menu)
+                    .frame(maxWidth: .infinity)
+
+                    Button(action: {
+                        SoundManager.shared.playNamedSound(selectedSound.wrappedValue)
+                    }) {
+                        HStack(spacing: 4) {
+                            Image(systemName: "speaker.wave.2.fill")
+                                .font(.system(size: 10))
+                            Text("Preview")
+                                .font(.system(size: 11, weight: .medium))
+                        }
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 4)
+                        .background(Color.white.opacity(0.08))
+                        .clipShape(RoundedRectangle(cornerRadius: 6))
+                    }
+                    .buttonStyle(.plain)
+                }
+                .padding(.leading, 42)
             }
         }
     }

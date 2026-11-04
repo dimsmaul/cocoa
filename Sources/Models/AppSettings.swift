@@ -76,6 +76,12 @@ public struct AppSettingsPayload: Codable, Sendable {
     public var pomoWorkMinutes: Int = 25
     public var pomoBreakMinutes: Int = 5
     public var soundEnabled: Bool = true
+    public var isSuccessSoundEnabled: Bool = true
+    public var successSound: String = "Glass"
+    public var isTaskAlertSoundEnabled: Bool = true
+    public var taskAlertSound: String = "Ping"
+    public var isNotificationSoundEnabled: Bool = true
+    public var notificationSound: String = "Tink"
     public var hoverDelaySeconds: Double = 0.35
     public var isNotchShieldEnabled: Bool = true
     public var notchLeftStyle: String = NotchLeftStyle.cocoaAndDot.rawValue
@@ -95,6 +101,12 @@ public struct AppSettingsPayload: Codable, Sendable {
         pomoWorkMinutes: Int = 25,
         pomoBreakMinutes: Int = 5,
         soundEnabled: Bool = true,
+        isSuccessSoundEnabled: Bool = true,
+        successSound: String = "Glass",
+        isTaskAlertSoundEnabled: Bool = true,
+        taskAlertSound: String = "Ping",
+        isNotificationSoundEnabled: Bool = true,
+        notificationSound: String = "Tink",
         hoverDelaySeconds: Double = 0.35,
         isNotchShieldEnabled: Bool = true,
         notchLeftStyle: String = NotchLeftStyle.cocoaAndDot.rawValue,
@@ -113,6 +125,12 @@ public struct AppSettingsPayload: Codable, Sendable {
         self.pomoWorkMinutes = pomoWorkMinutes
         self.pomoBreakMinutes = pomoBreakMinutes
         self.soundEnabled = soundEnabled
+        self.isSuccessSoundEnabled = isSuccessSoundEnabled
+        self.successSound = successSound
+        self.isTaskAlertSoundEnabled = isTaskAlertSoundEnabled
+        self.taskAlertSound = taskAlertSound
+        self.isNotificationSoundEnabled = isNotificationSoundEnabled
+        self.notificationSound = notificationSound
         self.hoverDelaySeconds = hoverDelaySeconds
         self.isNotchShieldEnabled = isNotchShieldEnabled
         self.notchLeftStyle = notchLeftStyle
@@ -124,6 +142,34 @@ public struct AppSettingsPayload: Codable, Sendable {
         self.aiModel = aiModel
         self.aiCustomBaseURL = aiCustomBaseURL
         self.aiSystemPrompt = aiSystemPrompt
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.supabaseURL = try container.decodeIfPresent(String.self, forKey: .supabaseURL) ?? ""
+        self.supabaseAnonKey = try container.decodeIfPresent(String.self, forKey: .supabaseAnonKey) ?? ""
+        self.isCloudSyncEnabled = try container.decodeIfPresent(Bool.self, forKey: .isCloudSyncEnabled) ?? false
+        self.pomoWorkMinutes = try container.decodeIfPresent(Int.self, forKey: .pomoWorkMinutes) ?? 25
+        self.pomoBreakMinutes = try container.decodeIfPresent(Int.self, forKey: .pomoBreakMinutes) ?? 5
+        let baseSound = try container.decodeIfPresent(Bool.self, forKey: .soundEnabled) ?? true
+        self.soundEnabled = baseSound
+        self.isSuccessSoundEnabled = try container.decodeIfPresent(Bool.self, forKey: .isSuccessSoundEnabled) ?? baseSound
+        self.successSound = try container.decodeIfPresent(String.self, forKey: .successSound) ?? "Glass"
+        self.isTaskAlertSoundEnabled = try container.decodeIfPresent(Bool.self, forKey: .isTaskAlertSoundEnabled) ?? true
+        self.taskAlertSound = try container.decodeIfPresent(String.self, forKey: .taskAlertSound) ?? "Ping"
+        self.isNotificationSoundEnabled = try container.decodeIfPresent(Bool.self, forKey: .isNotificationSoundEnabled) ?? true
+        self.notificationSound = try container.decodeIfPresent(String.self, forKey: .notificationSound) ?? "Tink"
+        self.hoverDelaySeconds = try container.decodeIfPresent(Double.self, forKey: .hoverDelaySeconds) ?? 0.35
+        self.isNotchShieldEnabled = try container.decodeIfPresent(Bool.self, forKey: .isNotchShieldEnabled) ?? true
+        self.notchLeftStyle = try container.decodeIfPresent(String.self, forKey: .notchLeftStyle) ?? NotchLeftStyle.cocoaAndDot.rawValue
+        self.isMCPServerEnabled = try container.decodeIfPresent(Bool.self, forKey: .isMCPServerEnabled) ?? true
+        self.mcpServerPort = try container.decodeIfPresent(Int.self, forKey: .mcpServerPort) ?? 4040
+        self.mcpAuthToken = try container.decodeIfPresent(String.self, forKey: .mcpAuthToken) ?? ""
+        self.aiProvider = try container.decodeIfPresent(String.self, forKey: .aiProvider) ?? AIProviderChoice.anthropic.rawValue
+        self.aiAPIKey = try container.decodeIfPresent(String.self, forKey: .aiAPIKey) ?? ""
+        self.aiModel = try container.decodeIfPresent(String.self, forKey: .aiModel) ?? ""
+        self.aiCustomBaseURL = try container.decodeIfPresent(String.self, forKey: .aiCustomBaseURL) ?? "http://localhost:11434/v1"
+        self.aiSystemPrompt = try container.decodeIfPresent(String.self, forKey: .aiSystemPrompt) ?? "You are Cocoa Focus Assistant. You help organize tasks, break down complex work into clear actionable subtasks, and estimate focus sessions."
     }
 }
 
@@ -153,6 +199,24 @@ public final class AppSettings: @unchecked Sendable {
         didSet { save() }
     }
     public var soundEnabled: Bool {
+        didSet { save() }
+    }
+    public var isSuccessSoundEnabled: Bool {
+        didSet { save() }
+    }
+    public var successSound: String {
+        didSet { save() }
+    }
+    public var isTaskAlertSoundEnabled: Bool {
+        didSet { save() }
+    }
+    public var taskAlertSound: String {
+        didSet { save() }
+    }
+    public var isNotificationSoundEnabled: Bool {
+        didSet { save() }
+    }
+    public var notificationSound: String {
         didSet { save() }
     }
 
@@ -237,6 +301,24 @@ public final class AppSettings: @unchecked Sendable {
         let storedSound = defaults.object(forKey: "sound_enabled") == nil ? true : defaults.bool(forKey: "sound_enabled")
         self.soundEnabled = loadedPayload != nil ? loadedPayload!.soundEnabled : storedSound
 
+        let storedSuccessEnabled = defaults.object(forKey: "is_success_sound_enabled") == nil ? storedSound : defaults.bool(forKey: "is_success_sound_enabled")
+        self.isSuccessSoundEnabled = loadedPayload?.isSuccessSoundEnabled ?? storedSuccessEnabled
+
+        let storedSuccessSound = defaults.string(forKey: "success_sound") ?? "Glass"
+        self.successSound = loadedPayload?.successSound.isEmpty == false ? loadedPayload!.successSound : storedSuccessSound
+
+        let storedTaskAlertEnabled = defaults.object(forKey: "is_task_alert_sound_enabled") == nil ? true : defaults.bool(forKey: "is_task_alert_sound_enabled")
+        self.isTaskAlertSoundEnabled = loadedPayload?.isTaskAlertSoundEnabled ?? storedTaskAlertEnabled
+
+        let storedTaskAlertSound = defaults.string(forKey: "task_alert_sound") ?? "Ping"
+        self.taskAlertSound = loadedPayload?.taskAlertSound.isEmpty == false ? loadedPayload!.taskAlertSound : storedTaskAlertSound
+
+        let storedNotificationEnabled = defaults.object(forKey: "is_notification_sound_enabled") == nil ? true : defaults.bool(forKey: "is_notification_sound_enabled")
+        self.isNotificationSoundEnabled = loadedPayload?.isNotificationSoundEnabled ?? storedNotificationEnabled
+
+        let storedNotificationSound = defaults.string(forKey: "notification_sound") ?? "Tink"
+        self.notificationSound = loadedPayload?.notificationSound.isEmpty == false ? loadedPayload!.notificationSound : storedNotificationSound
+
         // Notch Settings
         let storedHover = defaults.double(forKey: "hover_delay_seconds")
         let defaultHover = storedHover > 0 ? storedHover : 0.35
@@ -295,6 +377,12 @@ public final class AppSettings: @unchecked Sendable {
             pomoWorkMinutes: pomoWorkMinutes,
             pomoBreakMinutes: pomoBreakMinutes,
             soundEnabled: soundEnabled,
+            isSuccessSoundEnabled: isSuccessSoundEnabled,
+            successSound: successSound,
+            isTaskAlertSoundEnabled: isTaskAlertSoundEnabled,
+            taskAlertSound: taskAlertSound,
+            isNotificationSoundEnabled: isNotificationSoundEnabled,
+            notificationSound: notificationSound,
             hoverDelaySeconds: hoverDelaySeconds,
             isNotchShieldEnabled: isNotchShieldEnabled,
             notchLeftStyle: notchLeftStyle.rawValue,
@@ -323,6 +411,12 @@ public final class AppSettings: @unchecked Sendable {
         defaults.set(pomoWorkMinutes, forKey: "pomo_work_minutes")
         defaults.set(pomoBreakMinutes, forKey: "pomo_break_minutes")
         defaults.set(soundEnabled, forKey: "sound_enabled")
+        defaults.set(isSuccessSoundEnabled, forKey: "is_success_sound_enabled")
+        defaults.set(successSound, forKey: "success_sound")
+        defaults.set(isTaskAlertSoundEnabled, forKey: "is_task_alert_sound_enabled")
+        defaults.set(taskAlertSound, forKey: "task_alert_sound")
+        defaults.set(isNotificationSoundEnabled, forKey: "is_notification_sound_enabled")
+        defaults.set(notificationSound, forKey: "notification_sound")
         defaults.set(hoverDelaySeconds, forKey: "hover_delay_seconds")
         defaults.set(isNotchShieldEnabled, forKey: "notch_shield_enabled")
         defaults.set(notchLeftStyle.rawValue, forKey: "notch_left_style")
