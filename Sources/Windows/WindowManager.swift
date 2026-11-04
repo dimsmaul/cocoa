@@ -46,7 +46,14 @@ public final class WindowManager: NSObject, NSWindowDelegate {
     private func setupStatusItem() {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         if let button = statusItem?.button {
-            button.title = "🍫"
+            let config = NSImage.SymbolConfiguration(pointSize: 13, weight: .medium)
+            if let symbol = NSImage(systemSymbolName: "target", accessibilityDescription: "Cocoa")?.withSymbolConfiguration(config) {
+                symbol.isTemplate = true
+                button.image = symbol
+                button.title = ""
+            } else {
+                button.title = "Cocoa"
+            }
             button.action = #selector(statusItemClicked)
             button.target = self
         }

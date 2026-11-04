@@ -584,7 +584,7 @@ public final class TaskStore: @unchecked Sendable {
     private func loadInitialSampleTasks() {
         self.tasks = [
             TaskItem(
-                title: "Welcome to Cocoa 🍫",
+                title: "Welcome to Cocoa",
                 notes: "A powerful, native macOS focus companion engineered with Swift & SwiftUI.",
                 estimatedMinutes: 15,
                 priority: .high,

@@ -116,16 +116,25 @@ public struct SettingsView: View {
         VStack(alignment: .leading, spacing: 8) {
             // Cocoa Header
             HStack(spacing: 10) {
-                ZStack {
-                    RoundedRectangle(cornerRadius: 10, style: .continuous)
-                        .fill(LinearGradient(
-                            colors: [Color.orange.opacity(0.8), Color.purple.opacity(0.8)],
-                            startPoint: .topLeading,
-                            endPoint: .bottomTrailing
-                        ))
+                if let logo = NSImage(contentsOf: Bundle.main.bundleURL.appendingPathComponent("Contents/Resources/CocoaLogo.png")) {
+                    Image(nsImage: logo)
+                        .resizable()
+                        .aspectRatio(contentMode: .fit)
                         .frame(width: 32, height: 32)
-                    Text("🍫")
-                        .font(.system(size: 18))
+                        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                } else {
+                    ZStack {
+                        RoundedRectangle(cornerRadius: 8, style: .continuous)
+                            .fill(LinearGradient(
+                                colors: [Color.orange.opacity(0.8), Color.purple.opacity(0.8)],
+                                startPoint: .topLeading,
+                                endPoint: .bottomTrailing
+                            ))
+                            .frame(width: 32, height: 32)
+                        Image(systemName: "target")
+                            .font(.system(size: 16, weight: .bold))
+                            .foregroundStyle(.white)
+                    }
                 }
 
                 VStack(alignment: .leading, spacing: 1) {
@@ -1248,16 +1257,25 @@ public struct SettingsView: View {
         VStack(alignment: .leading, spacing: 18) {
             settingsCard {
                 HStack(spacing: 18) {
-                    ZStack {
-                        Circle()
-                            .fill(LinearGradient(
-                                colors: [Color.orange, Color.purple],
-                                startPoint: .topLeading,
-                                endPoint: .bottomTrailing
-                            ))
+                    if let logo = NSImage(contentsOf: Bundle.main.bundleURL.appendingPathComponent("Contents/Resources/CocoaLogo.png")) {
+                        Image(nsImage: logo)
+                            .resizable()
+                            .aspectRatio(contentMode: .fit)
                             .frame(width: 64, height: 64)
-                        Text("🍫")
-                            .font(.system(size: 34))
+                            .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                    } else {
+                        ZStack {
+                            Circle()
+                                .fill(LinearGradient(
+                                    colors: [Color.orange, Color.purple],
+                                    startPoint: .topLeading,
+                                    endPoint: .bottomTrailing
+                                ))
+                                .frame(width: 64, height: 64)
+                            Image(systemName: "target")
+                                .font(.system(size: 30, weight: .bold))
+                                .foregroundStyle(.white)
+                        }
                     }
 
                     VStack(alignment: .leading, spacing: 4) {
