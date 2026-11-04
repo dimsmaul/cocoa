@@ -7,7 +7,7 @@ let package = Package(
         .macOS(.v14)
     ],
     products: [
-        .executable(name: "Cocoa", targets: ["Cocoa"])
+        .executable(name: "Cocoa", targets: ["CocoaApp"])
     ],
     dependencies: [
         .package(url: "https://github.com/supabase/supabase-swift.git", from: "2.0.0"),
@@ -15,7 +15,7 @@ let package = Package(
     ],
     targets: [
         .executableTarget(
-            name: "Cocoa",
+            name: "CocoaApp",
             dependencies: [
                 .product(name: "Supabase", package: "supabase-swift"),
                 .product(name: "RichTextKit", package: "RichTextKit")
