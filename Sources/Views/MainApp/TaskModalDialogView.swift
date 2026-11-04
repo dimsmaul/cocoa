@@ -182,6 +182,7 @@ public struct TaskModalDialogView: View {
                                 .padding(.vertical, 6)
                                 .background(Color.secondary.opacity(0.12))
                                 .clipShape(RoundedRectangle(cornerRadius: 6))
+                                .contentShape(RoundedRectangle(cornerRadius: 6))
                         }
                         .buttonStyle(.plain)
 
@@ -195,6 +196,7 @@ public struct TaskModalDialogView: View {
                                 .background(Color.green.opacity(0.15))
                                 .foregroundStyle(.green)
                                 .clipShape(RoundedRectangle(cornerRadius: 6))
+                                .contentShape(RoundedRectangle(cornerRadius: 6))
                         }
                         .buttonStyle(.plain)
                     }
