@@ -48,39 +48,31 @@ public struct TaskModalDialogView: View {
 
                 Spacer()
 
-                // Compact Focus indicator/trigger
-                if taskStore.activeTaskId == currentTask.id {
-                    HStack(spacing: 5) {
-                        Circle()
-                            .fill(timerManager.isRunning ? Color.orange : Color.secondary)
-                            .frame(width: 6, height: 6)
-                        Text(timerManager.isRunning ? "Focusing (\(timerManager.formattedTime))" : "Active Focus")
-                            .font(.system(size: 11, weight: .semibold))
-                            .foregroundStyle(timerManager.isRunning ? Color.orange : Color.secondary)
-                    }
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 4)
-                    .background(Color.orange.opacity(0.12))
-                    .clipShape(Capsule())
-                } else {
-                    Button(action: {
+                // Start Focus Button with Play Icon
+                Button(action: {
+                    if taskStore.activeTaskId != currentTask.id {
                         taskStore.selectTask(id: currentTask.id)
                         timerManager.syncWithActiveTask()
-                    }) {
-                        HStack(spacing: 4) {
-                            Image(systemName: "target")
-                                .font(.system(size: 10))
-                            Text("Set as Focus")
-                                .font(.system(size: 11, weight: .medium))
-                        }
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 4)
-                        .background(Color.primary.opacity(0.06))
-                        .clipShape(Capsule())
+                        timerManager.start()
+                    } else {
+                        timerManager.toggle()
                     }
-                    .buttonStyle(.plain)
-                    .help("Set this task as active focus for the bottom music player bar")
+                }) {
+                    let isCurrentRunning = timerManager.isRunning && taskStore.activeTaskId == currentTask.id
+                    HStack(spacing: 5) {
+                        Image(systemName: isCurrentRunning ? "pause.fill" : "play.fill")
+                            .font(.system(size: 10, weight: .bold))
+                        Text(isCurrentRunning ? "Pause" : "Start")
+                            .font(.system(size: 11, weight: .bold))
+                    }
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 4.5)
+                    .background(isCurrentRunning ? Color.orange.opacity(0.2) : Color.orange)
+                    .foregroundStyle(isCurrentRunning ? Color.orange : Color.black)
+                    .clipShape(Capsule())
                 }
+                .buttonStyle(.plain)
+                .help(timerManager.isRunning && taskStore.activeTaskId == currentTask.id ? "Pause Focus" : "Start Focus")
 
                 Button(action: onClose) {
                     Image(systemName: "xmark")
