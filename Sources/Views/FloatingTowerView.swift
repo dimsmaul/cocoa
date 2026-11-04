@@ -306,10 +306,15 @@ public struct FloatingTowerView: View {
                             } else {
                                 ForEach(active.subtasks) { subtask in
                                     if editingSubtaskId == subtask.id {
-                                        HStack(spacing: 4) {
-                                            Image(systemName: "pencil")
-                                                .font(.system(size: 9))
-                                                .foregroundStyle(.orange)
+                                        HStack(spacing: 6) {
+                                            Button(action: {
+                                                taskStore.toggleSubtask(in: active.id, subtaskId: subtask.id)
+                                            }) {
+                                                Image(systemName: subtask.isCompleted ? "checkmark.circle.fill" : "circle")
+                                                    .font(.system(size: 12))
+                                                    .foregroundStyle(subtask.isCompleted ? Color.green : Color.secondary)
+                                            }
+                                            .buttonStyle(.plain)
 
                                             TextField("Edit subtask...", text: $editingSubtaskTitle)
                                                 .textFieldStyle(.plain)
@@ -339,9 +344,9 @@ public struct FloatingTowerView: View {
                                                 editingSubtaskTitle = ""
                                                 isSubtaskEditFocused = false
                                             }) {
-                                                Image(systemName: "checkmark.circle.fill")
-                                                    .font(.system(size: 11))
-                                                    .foregroundStyle(.green)
+                                                Image(systemName: "checkmark")
+                                                    .font(.system(size: 9, weight: .bold))
+                                                    .foregroundStyle(.secondary)
                                             }
                                             .buttonStyle(.plain)
 
@@ -350,16 +355,13 @@ public struct FloatingTowerView: View {
                                                 editingSubtaskTitle = ""
                                                 isSubtaskEditFocused = false
                                             }) {
-                                                Image(systemName: "xmark.circle.fill")
-                                                    .font(.system(size: 11))
-                                                    .foregroundStyle(.secondary)
+                                                Image(systemName: "xmark")
+                                                    .font(.system(size: 8))
+                                                    .foregroundStyle(.tertiary)
                                             }
                                             .buttonStyle(.plain)
                                         }
-                                        .padding(.horizontal, 4)
-                                        .padding(.vertical, 2)
-                                        .background(Color.orange.opacity(0.1))
-                                        .clipShape(RoundedRectangle(cornerRadius: 4))
+                                        .padding(.vertical, 1)
                                     } else {
                                         HStack(spacing: 6) {
                                             Button(action: {
@@ -387,31 +389,15 @@ public struct FloatingTowerView: View {
 
                                             Spacer()
 
-                                            HStack(spacing: 4) {
-                                                Button(action: {
-                                                    editingSubtaskId = subtask.id
-                                                    editingSubtaskTitle = subtask.title
-                                                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
-                                                        isSubtaskEditFocused = true
-                                                    }
-                                                }) {
-                                                    Image(systemName: "pencil")
-                                                        .font(.system(size: 9))
-                                                        .foregroundStyle(.secondary.opacity(0.7))
-                                                }
-                                                .buttonStyle(.plain)
-                                                .help("Edit Subtask")
-
-                                                Button(action: {
-                                                    taskStore.deleteSubtask(in: active.id, subtaskId: subtask.id)
-                                                }) {
-                                                    Image(systemName: "xmark")
-                                                        .font(.system(size: 8))
-                                                        .foregroundStyle(.tertiary)
-                                                }
-                                                .buttonStyle(.plain)
-                                                .help("Delete Subtask")
+                                            Button(action: {
+                                                taskStore.deleteSubtask(in: active.id, subtaskId: subtask.id)
+                                            }) {
+                                                Image(systemName: "xmark")
+                                                    .font(.system(size: 8))
+                                                    .foregroundStyle(.tertiary)
                                             }
+                                            .buttonStyle(.plain)
+                                            .help("Delete Subtask")
                                         }
                                         .padding(.vertical, 1)
                                         .contentShape(Rectangle())

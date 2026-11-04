@@ -334,9 +334,14 @@ public struct TaskModalDialogView: View {
             ForEach(task.subtasks) { sub in
                 if editingSubtaskId == sub.id {
                     HStack(spacing: 8) {
-                        Image(systemName: "pencil")
-                            .font(.system(size: 11))
-                            .foregroundStyle(.orange)
+                        Button(action: {
+                            taskStore.toggleSubtask(in: task.id, subtaskId: sub.id)
+                        }) {
+                            Image(systemName: sub.isCompleted ? "checkmark.square.fill" : "square")
+                                .font(.system(size: 14))
+                                .foregroundStyle(sub.isCompleted ? Color.green : Color.secondary)
+                        }
+                        .buttonStyle(.plain)
 
                         TextField("Subtask title...", text: $editingSubtaskTitle)
                             .textFieldStyle(.plain)
@@ -352,9 +357,9 @@ public struct TaskModalDialogView: View {
                         Button(action: {
                             saveSubtaskEdit(taskId: task.id, subtaskId: sub.id)
                         }) {
-                            Image(systemName: "checkmark.circle.fill")
-                                .font(.system(size: 13))
-                                .foregroundStyle(.green)
+                            Image(systemName: "checkmark")
+                                .font(.system(size: 10, weight: .bold))
+                                .foregroundStyle(.secondary)
                         }
                         .buttonStyle(.plain)
                         .help("Save (Enter)")
@@ -362,21 +367,15 @@ public struct TaskModalDialogView: View {
                         Button(action: {
                             cancelSubtaskEdit()
                         }) {
-                            Image(systemName: "xmark.circle.fill")
-                                .font(.system(size: 13))
-                                .foregroundStyle(.secondary)
+                            Image(systemName: "xmark")
+                                .font(.system(size: 10))
+                                .foregroundStyle(.secondary.opacity(0.5))
                         }
                         .buttonStyle(.plain)
                         .help("Cancel (Esc)")
                     }
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 4)
-                    .background(Color.orange.opacity(0.08))
-                    .clipShape(RoundedRectangle(cornerRadius: 6))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 6)
-                            .stroke(Color.orange.opacity(0.3), lineWidth: 1)
-                    )
+                    .padding(.vertical, 3)
+                    .padding(.horizontal, 4)
                 } else {
                     HStack(spacing: 8) {
                         Button(action: {
@@ -399,27 +398,15 @@ public struct TaskModalDialogView: View {
 
                         Spacer()
 
-                        HStack(spacing: 6) {
-                            Button(action: {
-                                startEditingSubtask(sub)
-                            }) {
-                                Image(systemName: "pencil")
-                                    .font(.system(size: 11))
-                                    .foregroundStyle(.secondary.opacity(0.7))
-                            }
-                            .buttonStyle(.plain)
-                            .help("Edit Subtask")
-
-                            Button(action: {
-                                taskStore.deleteSubtask(in: task.id, subtaskId: sub.id)
-                            }) {
-                                Image(systemName: "xmark")
-                                    .font(.system(size: 10))
-                                    .foregroundStyle(.secondary.opacity(0.5))
-                            }
-                            .buttonStyle(.plain)
-                            .help("Delete Subtask")
+                        Button(action: {
+                            taskStore.deleteSubtask(in: task.id, subtaskId: sub.id)
+                        }) {
+                            Image(systemName: "xmark")
+                                .font(.system(size: 10))
+                                .foregroundStyle(.secondary.opacity(0.5))
                         }
+                        .buttonStyle(.plain)
+                        .help("Delete Subtask")
                     }
                     .padding(.vertical, 3)
                     .padding(.horizontal, 4)

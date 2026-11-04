@@ -368,14 +368,19 @@ public struct NotchPillView: View {
                         } else {
                             ForEach(active.subtasks) { subtask in
                                 if editingSubtaskId == subtask.id {
-                                    HStack(spacing: 6) {
-                                        Image(systemName: "pencil")
-                                            .font(.system(size: 10))
-                                            .foregroundStyle(Color.orange)
+                                    HStack(spacing: 8) {
+                                        Button(action: {
+                                            taskStore.toggleSubtask(in: active.id, subtaskId: subtask.id)
+                                        }) {
+                                            Image(systemName: subtask.isCompleted ? "checkmark.circle.fill" : "circle")
+                                                .font(.system(size: 13))
+                                                .foregroundStyle(subtask.isCompleted ? Color.green : Color.white.opacity(0.6))
+                                        }
+                                        .buttonStyle(.plain)
 
                                         TextField("Edit subtask...", text: $editingSubtaskText)
                                             .textFieldStyle(.plain)
-                                            .font(.system(size: 12))
+                                            .font(.system(size: 12.5))
                                             .foregroundStyle(.white)
                                             .focused($isSubtaskEditFocused)
                                             .onSubmit {
@@ -402,9 +407,9 @@ public struct NotchPillView: View {
                                             editingSubtaskText = ""
                                             isSubtaskEditFocused = false
                                         }) {
-                                            Image(systemName: "checkmark.circle.fill")
-                                                .font(.system(size: 12))
-                                                .foregroundStyle(Color.green)
+                                            Image(systemName: "checkmark")
+                                                .font(.system(size: 10, weight: .bold))
+                                                .foregroundStyle(Color.white.opacity(0.8))
                                         }
                                         .buttonStyle(.plain)
 
@@ -413,16 +418,14 @@ public struct NotchPillView: View {
                                             editingSubtaskText = ""
                                             isSubtaskEditFocused = false
                                         }) {
-                                            Image(systemName: "xmark.circle.fill")
-                                                .font(.system(size: 12))
-                                                .foregroundStyle(Color.white.opacity(0.5))
+                                            Image(systemName: "xmark")
+                                                .font(.system(size: 9))
+                                                .foregroundStyle(Color.white.opacity(0.35))
                                         }
                                         .buttonStyle(.plain)
                                     }
-                                    .padding(.horizontal, 6)
-                                    .padding(.vertical, 3)
-                                    .background(Color.orange.opacity(0.18))
-                                    .clipShape(RoundedRectangle(cornerRadius: 6))
+                                    .padding(.vertical, 2)
+                                    .padding(.horizontal, 4)
                                 } else {
                                     HStack(spacing: 8) {
                                         Button(action: {
@@ -450,31 +453,15 @@ public struct NotchPillView: View {
 
                                         Spacer()
 
-                                        HStack(spacing: 6) {
-                                            Button(action: {
-                                                editingSubtaskId = subtask.id
-                                                editingSubtaskText = subtask.title
-                                                DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
-                                                    isSubtaskEditFocused = true
-                                                }
-                                            }) {
-                                                Image(systemName: "pencil")
-                                                    .font(.system(size: 9))
-                                                    .foregroundStyle(Color.white.opacity(0.65))
-                                            }
-                                            .buttonStyle(.plain)
-                                            .help("Edit Subtask")
-
-                                            Button(action: {
-                                                taskStore.deleteSubtask(in: active.id, subtaskId: subtask.id)
-                                            }) {
-                                                Image(systemName: "xmark")
-                                                    .font(.system(size: 9))
-                                                    .foregroundStyle(Color.white.opacity(0.35))
-                                            }
-                                            .buttonStyle(.plain)
-                                            .help("Delete Subtask")
+                                        Button(action: {
+                                            taskStore.deleteSubtask(in: active.id, subtaskId: subtask.id)
+                                        }) {
+                                            Image(systemName: "xmark")
+                                                .font(.system(size: 9))
+                                                .foregroundStyle(Color.white.opacity(0.35))
                                         }
+                                        .buttonStyle(.plain)
+                                        .help("Delete Subtask")
                                     }
                                     .padding(.vertical, 2)
                                     .padding(.horizontal, 4)
