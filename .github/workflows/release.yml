@@ -17,6 +17,17 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      - name: Select Xcode Version
+        run: |
+          for xcode in /Applications/Xcode_16*.app /Applications/Xcode_15*.app; do
+            if [ -d "$xcode" ]; then
+              echo "Selecting $xcode"
+              sudo xcode-select -s "$xcode"
+              break
+            fi
+          done
+          swift --version
+
       - name: Build and Package Cocoa.app
         run: |
           chmod +x ./build-app.sh

@@ -8,6 +8,10 @@ if CommandLine.arguments.contains("--mcp") {
 
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
+    nonisolated override init() {
+        super.init()
+    }
+
     func applicationDidFinishLaunching(_ notification: Notification) {
         setupAppIcon()
         setupMainMenu()
