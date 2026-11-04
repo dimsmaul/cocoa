@@ -285,6 +285,7 @@ public struct FloatingTowerView: View {
                                     taskStore.updateNotes(for: active.id, notes: newNotes)
                                 }
                             ),
+                            taskId: active.id,
                             baseFontSize: 13.5,
                             minHeight: 85
                         )

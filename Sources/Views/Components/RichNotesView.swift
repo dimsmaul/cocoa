@@ -198,7 +198,6 @@ public final class CocoaRichTextView: RichTextView {
         }
 
         super.insertText(string, replacementRange: replacementRange)
-        notifyContentChanged()
     }
 
     // MARK: - Enter Key Interception (Auto-continue or Exit List/Quote)
@@ -552,17 +551,24 @@ public final class CocoaRichTextView: RichTextView {
 // MARK: - NativeRichTextEditor (SwiftUI Representable)
 public struct NativeRichTextEditor: View {
     @Binding public var text: String
+    public var taskId: UUID?
     public var baseFontSize: CGFloat
     public var minHeight: CGFloat
 
-    public init(text: Binding<String>, baseFontSize: CGFloat = 14, minHeight: CGFloat = 100) {
+    public init(
+        text: Binding<String>,
+        taskId: UUID? = nil,
+        baseFontSize: CGFloat = 14,
+        minHeight: CGFloat = 100
+    ) {
         self._text = text
+        self.taskId = taskId
         self.baseFontSize = baseFontSize
         self.minHeight = minHeight
     }
 
     public var body: some View {
-        RichTextRepresentable(text: $text, baseFontSize: baseFontSize)
+        RichTextRepresentable(text: $text, taskId: taskId, baseFontSize: baseFontSize)
             .frame(minHeight: minHeight)
             .padding(8)
             .background(Color.white.opacity(0.06))
@@ -578,6 +584,7 @@ public struct NativeRichTextEditor: View {
 @MainActor
 private struct RichTextRepresentable: NSViewRepresentable {
     @Binding var text: String
+    var taskId: UUID?
     var baseFontSize: CGFloat
 
     func makeCoordinator() -> Coordinator {
@@ -620,12 +627,13 @@ private struct RichTextRepresentable: NSViewRepresentable {
 
         textView.delegate = context.coordinator
         context.coordinator.textView = textView
+        context.coordinator.currentTaskId = taskId
 
         // Populate initial text
         context.coordinator.loadTextIntoView(text)
 
-        textView.onContentChange = { attributed in
-            context.coordinator.syncToBinding(attributed)
+        textView.onContentChange = { [weak coordinator = context.coordinator] attributed in
+            coordinator?.scheduleSyncToBinding(attributed)
         }
 
         scrollView.documentView = textView
@@ -634,10 +642,29 @@ private struct RichTextRepresentable: NSViewRepresentable {
 
     func updateNSView(_ nsView: NSScrollView, context: Context) {
         guard let textView = nsView.documentView as? CocoaRichTextView else { return }
+        context.coordinator.parent = self
         textView.baseFontSize = baseFontSize
 
-        if !context.coordinator.isInternalUpdate && context.coordinator.lastSyncedText != text {
-            context.coordinator.loadTextIntoView(text)
+        let coordinator = context.coordinator
+
+        // 1. If taskId switched, always reload the new task's notes
+        if let taskId, coordinator.currentTaskId != taskId {
+            coordinator.currentTaskId = taskId
+            coordinator.isEditing = false
+            coordinator.loadTextIntoView(text)
+            return
+        }
+
+        // 2. If the user is currently focused or actively typing in the text view,
+        // NEVER overwrite the text storage to prevent glitching/deleting keystrokes!
+        let isFocused = (textView.window?.firstResponder === textView)
+        if coordinator.isEditing || isFocused {
+            return
+        }
+
+        // 3. Only update when not actively editing and external text changed
+        if !coordinator.isInternalUpdate && coordinator.lastSyncedText != text {
+            coordinator.loadTextIntoView(text)
         }
     }
 
@@ -647,9 +674,21 @@ private struct RichTextRepresentable: NSViewRepresentable {
         weak var textView: CocoaRichTextView?
         var lastSyncedText: String = ""
         var isInternalUpdate = false
+        var isEditing = false
+        var currentTaskId: UUID?
+        private var debounceWorkItem: DispatchWorkItem?
 
         init(_ parent: RichTextRepresentable) {
             self.parent = parent
+        }
+
+        func textDidBeginEditing(_ notification: Notification) {
+            isEditing = true
+        }
+
+        func textDidEndEditing(_ notification: Notification) {
+            isEditing = false
+            flushPendingSync()
         }
 
         func loadTextIntoView(_ string: String) {
@@ -680,7 +719,7 @@ private struct RichTextRepresentable: NSViewRepresentable {
             guard !isInternalUpdate, let textView = textView else { return }
             textView.ensureTypingColorIsWhite()
             if let storage = textView.textStorage {
-                syncToBinding(storage)
+                scheduleSyncToBinding(storage)
             }
         }
 
@@ -689,23 +728,49 @@ private struct RichTextRepresentable: NSViewRepresentable {
             textView.ensureTypingColorIsWhite()
         }
 
-        func syncToBinding(_ attr: NSAttributedString) {
+        func scheduleSyncToBinding(_ attr: NSAttributedString) {
             guard !isInternalUpdate else { return }
-            isInternalUpdate = true
-            defer { isInternalUpdate = false }
+
+            debounceWorkItem?.cancel()
 
             let sanitized = sanitize(attr, baseFontSize: parent.baseFontSize)
-
-            // If text contains rich attributes (bold, italic, underline, strikethrough, code, or background), serialize to RTF
+            let resultString: String
             if hasRichFormatting(sanitized),
                let data = try? sanitized.richTextData(for: .rtf),
-               let rtfString = String(data: data, encoding: .utf8) {
-                lastSyncedText = rtfString
-                parent.text = rtfString
+               let rtf = String(data: data, encoding: .utf8) {
+                resultString = rtf
             } else {
-                let plain = sanitized.string
-                lastSyncedText = plain
-                parent.text = plain
+                resultString = sanitized.string
+            }
+            lastSyncedText = resultString
+
+            let workItem = DispatchWorkItem { [weak self] in
+                guard let self = self else { return }
+                self.isInternalUpdate = true
+                self.parent.text = resultString
+                self.isInternalUpdate = false
+            }
+            self.debounceWorkItem = workItem
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.2, execute: workItem)
+        }
+
+        func flushPendingSync() {
+            debounceWorkItem?.cancel()
+            debounceWorkItem = nil
+            if let textView = textView, let storage = textView.textStorage {
+                let sanitized = sanitize(storage, baseFontSize: parent.baseFontSize)
+                let resultString: String
+                if hasRichFormatting(sanitized),
+                   let data = try? sanitized.richTextData(for: .rtf),
+                   let rtf = String(data: data, encoding: .utf8) {
+                    resultString = rtf
+                } else {
+                    resultString = sanitized.string
+                }
+                lastSyncedText = resultString
+                isInternalUpdate = true
+                parent.text = resultString
+                isInternalUpdate = false
             }
         }
 

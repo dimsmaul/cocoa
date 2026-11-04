@@ -256,11 +256,10 @@ public struct TaskModalDialogView: View {
                     text: Binding(
                         get: { task.notes },
                         set: { newNotes in
-                            if let index = taskStore.tasks.firstIndex(where: { $0.id == task.id }) {
-                                taskStore.tasks[index].notes = newNotes
-                            }
+                            taskStore.updateNotes(for: task.id, notes: newNotes)
                         }
                     ),
+                    taskId: task.id,
                     baseFontSize: 14,
                     minHeight: 120
                 )
