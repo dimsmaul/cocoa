@@ -940,6 +940,120 @@ public struct SettingsView: View {
                     }
                 }
             }
+
+            // Custom Sounds (Local) Card
+            settingsCard {
+                VStack(alignment: .leading, spacing: 14) {
+                    cardSectionTitle("CUSTOM SOUND EFFECTS (LOCAL)", icon: "waveform.and.magnifyingglass")
+
+                    Text("Import your own audio clips (.mp3, .wav, .m4a, .aiff) saved locally on this Mac: ~/Library/Application Support/Cocoa/Sounds/. These can be selected as your Success, Alert, or Notification sound.")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+
+                    HStack(spacing: 10) {
+                        Button(action: {
+                            SoundManager.shared.promptImportCustomSound { newSound in
+                                if let newSound {
+                                    SoundManager.shared.playNamedSound(newSound.id)
+                                }
+                            }
+                        }) {
+                            HStack(spacing: 6) {
+                                Image(systemName: "plus.circle.fill")
+                                Text("Import Audio File...")
+                            }
+                            .font(.system(size: 11, weight: .medium))
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .controlSize(.small)
+
+                        Button(action: {
+                            SoundManager.shared.revealCustomSoundsInFinder()
+                        }) {
+                            HStack(spacing: 6) {
+                                Image(systemName: "folder.fill")
+                                Text("Open in Finder")
+                            }
+                            .font(.system(size: 11))
+                        }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                    }
+
+                    if SoundManager.shared.customSounds.isEmpty {
+                        HStack(spacing: 8) {
+                            Image(systemName: "music.note")
+                                .font(.system(size: 14))
+                                .foregroundStyle(.secondary)
+                            Text("No custom sounds imported yet. Click 'Import Audio File' or drop your favorite audio files into the Cocoa Sounds folder.")
+                                .font(.system(size: 11))
+                                .foregroundStyle(.tertiary)
+                        }
+                        .padding(.vertical, 8)
+                        .padding(.horizontal, 10)
+                        .background(Color.white.opacity(0.02))
+                        .clipShape(RoundedRectangle(cornerRadius: 6))
+                    } else {
+                        Divider().opacity(0.12)
+
+                        VStack(spacing: 8) {
+                            ForEach(SoundManager.shared.customSounds) { sound in
+                                HStack(spacing: 10) {
+                                    ZStack {
+                                        RoundedRectangle(cornerRadius: 6, style: .continuous)
+                                            .fill(Color.orange.opacity(0.15))
+                                            .frame(width: 28, height: 28)
+                                        Image(systemName: "waveform")
+                                            .font(.system(size: 13))
+                                            .foregroundStyle(Color.orange)
+                                    }
+
+                                    VStack(alignment: .leading, spacing: 1) {
+                                        Text(sound.name)
+                                            .font(.system(size: 12, weight: .semibold))
+                                        Text(sound.description)
+                                            .font(.system(size: 10))
+                                            .foregroundStyle(.secondary)
+                                    }
+
+                                    Spacer()
+
+                                    // Quick test
+                                    Button(action: {
+                                        SoundManager.shared.playNamedSound(sound.id)
+                                    }) {
+                                        HStack(spacing: 4) {
+                                            Image(systemName: "speaker.wave.2.fill")
+                                                .font(.system(size: 9))
+                                            Text("Play")
+                                                .font(.system(size: 10, weight: .medium))
+                                        }
+                                        .padding(.horizontal, 8)
+                                        .padding(.vertical, 3)
+                                        .background(Color.white.opacity(0.08))
+                                        .clipShape(RoundedRectangle(cornerRadius: 5))
+                                    }
+                                    .buttonStyle(.plain)
+
+                                    // Delete
+                                    Button(action: {
+                                        SoundManager.shared.deleteCustomSound(id: sound.id)
+                                    }) {
+                                        Image(systemName: "trash")
+                                            .font(.system(size: 10))
+                                            .foregroundStyle(Color.red.opacity(0.7))
+                                    }
+                                    .buttonStyle(.plain)
+                                    .help("Delete local audio file")
+                                }
+                                .padding(8)
+                                .background(Color.white.opacity(0.03))
+                                .clipShape(RoundedRectangle(cornerRadius: 6))
+                            }
+                        }
+                    }
+                }
+            }
         }
     }
 
@@ -980,9 +1094,20 @@ public struct SettingsView: View {
             if isEnabled.wrappedValue {
                 HStack(spacing: 10) {
                     Picker("", selection: selectedSound) {
-                        ForEach(SoundManager.availableSounds) { sound in
-                            Text("\(sound.emoji)  \(sound.name) — \(sound.description)")
-                                .tag(sound.id)
+                        if !SoundManager.shared.customSounds.isEmpty {
+                            Section("Custom Local Sounds") {
+                                ForEach(SoundManager.shared.customSounds) { sound in
+                                    Text("\(sound.emoji)  \(sound.name) — \(sound.description)")
+                                        .tag(sound.id)
+                                }
+                            }
+                        }
+
+                        Section("macOS System Sounds") {
+                            ForEach(SoundManager.systemSounds) { sound in
+                                Text("\(sound.emoji)  \(sound.name) — \(sound.description)")
+                                    .tag(sound.id)
+                            }
                         }
                     }
                     .pickerStyle(.menu)
