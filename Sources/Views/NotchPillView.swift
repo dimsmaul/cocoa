@@ -152,8 +152,12 @@ public struct NotchPillView: View {
     private var leftEarView: some View {
         HStack(spacing: 6) {
             if AppSettings.shared.notchLeftStyle == .cocoaAndDot {
-                Text("🍫")
-                    .font(.system(size: 11))
+                if let logo = NSImage(contentsOf: Bundle.main.bundleURL.appendingPathComponent("Contents/Resources/CocoaLogo.png")) {
+                    Image(nsImage: logo)
+                        .resizable()
+                        .aspectRatio(contentMode: .fit)
+                        .frame(width: 11, height: 11)
+                }
             }
 
             // Glowing status dot: kuning (focus), hijau (rest/mati)
@@ -210,9 +214,10 @@ public struct NotchPillView: View {
         VStack(spacing: 12) {
             // Header Row (Active Task & Mode Detach Buttons)
             HStack(alignment: .center) {
-                HStack(spacing: 6) {
-                    Text("🍫")
-                        .font(.system(size: 13))
+                HStack(spacing: 7) {
+                    Image(systemName: "target")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(Color.orange)
                     Text(taskStore.activeTask?.title ?? "No Active Task")
                         .font(.system(size: 13, weight: .semibold))
                         .foregroundStyle(.white)

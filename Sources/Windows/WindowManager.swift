@@ -183,7 +183,7 @@ public final class WindowManager: NSObject, NSWindowDelegate {
         let x = screenFrame.maxX - windowWidth - 40
         let y = screenFrame.maxY - windowHeight - 40
 
-        let window = NSWindow(
+        let window = FloatingTowerWindow(
             contentRect: NSRect(x: x, y: y, width: windowWidth, height: windowHeight),
             styleMask: [.borderless, .resizable],
             backing: .buffered,

@@ -8,8 +8,8 @@ public enum NotchLeftStyle: String, CaseIterable, Identifiable, Sendable {
     public var id: String { rawValue }
     public var label: String {
         switch self {
-        case .cocoaAndDot: return "🍫 Cocoa + Status Dot"
-        case .dotOnly: return "● Status Dot Only"
+        case .cocoaAndDot: return "Cocoa Logo + Status Dot"
+        case .dotOnly: return "Status Dot Only"
         }
     }
 }
