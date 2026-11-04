@@ -12,6 +12,8 @@ public struct TaskModalDialogView: View {
     @State private var editingSubtaskId: UUID? = nil
     @State private var editingSubtaskTitle: String = ""
     @State private var newCommentText: String = ""
+    @State private var sheetWindow: NSWindow? = nil
+    @State private var clickMonitor: Any? = nil
     @FocusState private var isSubtaskEditFocused: Bool
 
     public init(
@@ -110,9 +112,15 @@ public struct TaskModalDialogView: View {
                 .padding(20)
             }
         }
-        .frame(width: 560, height: 600)
-        .background(Color(NSColor.windowBackgroundColor))
-        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .frame(width: 540, height: 600)
+        .background(.regularMaterial)
+        .background(WindowAccessor { window in
+            self.sheetWindow = window
+            setupOutsideClickMonitor(for: window)
+        })
+        .onDisappear {
+            removeOutsideClickMonitor()
+        }
     }
 
     // MARK: - Task Fields Section
@@ -473,4 +481,44 @@ public struct TaskModalDialogView: View {
         taskStore.addComment(to: taskId, author: "You", content: trimmed)
         newCommentText = ""
     }
+
+    // MARK: - Native Sheet Outside Click Dismissal
+    private func setupOutsideClickMonitor(for window: NSWindow) {
+        removeOutsideClickMonitor()
+        clickMonitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak window] event in
+            guard let window else { return event }
+            let clickScreenLocation = NSEvent.mouseLocation
+            if !window.frame.contains(clickScreenLocation) {
+                DispatchQueue.main.async {
+                    onClose()
+                }
+                return nil
+            }
+            return event
+        }
+    }
+
+    private func removeOutsideClickMonitor() {
+        if let monitor = clickMonitor {
+            NSEvent.removeMonitor(monitor)
+            clickMonitor = nil
+        }
+    }
+}
+
+// MARK: - Native Window Accessor Helper
+private struct WindowAccessor: NSViewRepresentable {
+    let onWindow: (NSWindow) -> Void
+
+    func makeNSView(context: Context) -> NSView {
+        let view = NSView()
+        DispatchQueue.main.async {
+            if let window = view.window {
+                onWindow(window)
+            }
+        }
+        return view
+    }
+
+    func updateNSView(_ nsView: NSView, context: Context) {}
 }
