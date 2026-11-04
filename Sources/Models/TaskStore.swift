@@ -23,7 +23,7 @@ public final class TaskStore: @unchecked Sendable {
     ]
     public var activeTaskId: UUID? = nil
     public var selectedTaskId: UUID? = nil
-    public var selectedSection: SidebarSection = .board(.today)
+    public var selectedSection: SidebarSection = .board(.inbox)
     public var searchQuery: String = ""
     public var viewMode: TaskViewMode = .list
     public var deletedTaskIds: Set<UUID> = []
@@ -98,7 +98,11 @@ public final class TaskStore: @unchecked Sendable {
 
         switch selectedSection {
         case .board(let board):
-            base = tasks.filter { $0.board == board }
+            if board == .inbox {
+                base = tasks.filter { !$0.isCompleted }
+            } else {
+                base = tasks.filter { $0.board == board }
+            }
         case .list(let listName):
             base = tasks.filter { $0.listName == listName && !$0.isCompleted }
         }
@@ -120,6 +124,9 @@ public final class TaskStore: @unchecked Sendable {
     }
 
     public func countForBoard(_ board: TaskBoard) -> Int {
+        if board == .inbox {
+            return tasks.filter { !$0.isCompleted }.count
+        }
         return tasks.filter { $0.board == board }.count
     }
 
@@ -154,7 +161,14 @@ public final class TaskStore: @unchecked Sendable {
             targetList = "General"
         }
 
-        let resolvedDue = dueDate ?? (board == .today ? Date() : (board == .upcoming ? Calendar.current.date(byAdding: .day, value: 1, to: Date()) : nil))
+        let targetBoard: TaskBoard
+        if case .board(let b) = selectedSection {
+            targetBoard = b
+        } else {
+            targetBoard = board
+        }
+
+        let resolvedDue = dueDate ?? (targetBoard == .today ? Date() : (targetBoard == .upcoming ? Calendar.current.date(byAdding: .day, value: 1, to: Date()) : nil))
 
         let newTask = TaskItem(
             title: trimmed,
@@ -162,7 +176,7 @@ public final class TaskStore: @unchecked Sendable {
             estimatedMinutes: estimatedMinutes,
             priority: priority,
             listName: targetList,
-            board: board,
+            board: targetBoard,
             dueDate: resolvedDue
         )
 
@@ -215,6 +229,9 @@ public final class TaskStore: @unchecked Sendable {
         tasks[index].board = board
         let calendar = Calendar.current
         switch board {
+        case .inbox:
+            tasks[index].isCompleted = false
+            tasks[index].completedAt = nil
         case .today:
             tasks[index].dueDate = Date()
             tasks[index].isCompleted = false
@@ -269,36 +286,115 @@ public final class TaskStore: @unchecked Sendable {
         save()
     }
 
-    public func addSubtask(to taskId: UUID, title: String) {
+    public func addSubtask(to taskId: UUID, parentSubtaskId: UUID? = nil, title: String) {
         guard let index = tasks.firstIndex(where: { $0.id == taskId }) else { return }
         let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
-        tasks[index].subtasks.append(SubtaskItem(title: trimmed))
-        save()
-    }
+        let newItem = SubtaskItem(title: trimmed)
 
-    public func toggleSubtask(in taskId: UUID, subtaskId: UUID) {
-        guard let taskIndex = tasks.firstIndex(where: { $0.id == taskId }),
-              let subIndex = tasks[taskIndex].subtasks.firstIndex(where: { $0.id == subtaskId }) else { return }
-        tasks[taskIndex].subtasks[subIndex].isCompleted.toggle()
-        if tasks[taskIndex].subtasks[subIndex].isCompleted {
-            SoundManager.shared.playSuccessSound()
+        if let parentId = parentSubtaskId {
+            func insertChild(in list: inout [SubtaskItem]) -> Bool {
+                for i in list.indices {
+                    if list[i].id == parentId {
+                        list[i].subtasks.append(newItem)
+                        return true
+                    }
+                    if insertChild(in: &list[i].subtasks) {
+                        return true
+                    }
+                }
+                return false
+            }
+            _ = insertChild(in: &tasks[index].subtasks)
+        } else {
+            tasks[index].subtasks.append(newItem)
         }
         save()
     }
 
+    public func toggleSubtask(in taskId: UUID, subtaskId: UUID) {
+        guard let taskIndex = tasks.firstIndex(where: { $0.id == taskId }) else { return }
+        var didComplete = false
+
+        func toggleInList(_ list: inout [SubtaskItem]) -> Bool {
+            for i in list.indices {
+                if list[i].id == subtaskId {
+                    list[i].isCompleted.toggle()
+                    if list[i].isCompleted { didComplete = true }
+                    return true
+                }
+                if toggleInList(&list[i].subtasks) {
+                    return true
+                }
+            }
+            return false
+        }
+
+        if toggleInList(&tasks[taskIndex].subtasks) {
+            if didComplete {
+                SoundManager.shared.playSuccessSound()
+            }
+            save()
+        }
+    }
+
     public func updateSubtask(in taskId: UUID, subtaskId: UUID, newTitle: String) {
-        guard let taskIndex = tasks.firstIndex(where: { $0.id == taskId }),
-              let subIndex = tasks[taskIndex].subtasks.firstIndex(where: { $0.id == subtaskId }) else { return }
+        guard let taskIndex = tasks.firstIndex(where: { $0.id == taskId }) else { return }
         let trimmed = newTitle.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
-        tasks[taskIndex].subtasks[subIndex].title = trimmed
-        save()
+
+        func updateInList(_ list: inout [SubtaskItem]) -> Bool {
+            for i in list.indices {
+                if list[i].id == subtaskId {
+                    list[i].title = trimmed
+                    return true
+                }
+                if updateInList(&list[i].subtasks) {
+                    return true
+                }
+            }
+            return false
+        }
+
+        if updateInList(&tasks[taskIndex].subtasks) {
+            save()
+        }
     }
 
     public func deleteSubtask(in taskId: UUID, subtaskId: UUID) {
         guard let taskIndex = tasks.firstIndex(where: { $0.id == taskId }) else { return }
-        tasks[taskIndex].subtasks.removeAll(where: { $0.id == subtaskId })
+
+        func deleteFromList(_ list: inout [SubtaskItem]) -> Bool {
+            if let idx = list.firstIndex(where: { $0.id == subtaskId }) {
+                list.remove(at: idx)
+                return true
+            }
+            for i in list.indices {
+                if deleteFromList(&list[i].subtasks) {
+                    return true
+                }
+            }
+            return false
+        }
+
+        if deleteFromList(&tasks[taskIndex].subtasks) {
+            save()
+        }
+    }
+
+    // MARK: - Comments
+    public func addComment(to taskId: UUID, author: String = "You", content: String) {
+        let trimmed = content.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        guard let index = tasks.firstIndex(where: { $0.id == taskId }) else { return }
+        let newComment = TaskComment(author: author, content: trimmed, createdAt: Date())
+        tasks[index].comments.append(newComment)
+        save()
+    }
+
+    public func deleteComment(taskId: UUID, commentId: UUID) {
+        guard let index = tasks.firstIndex(where: { $0.id == taskId }) else { return }
+        tasks[index].comments.removeAll(where: { $0.id == commentId })
         save()
     }
 

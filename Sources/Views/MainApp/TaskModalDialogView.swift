@@ -11,6 +11,7 @@ public struct TaskModalDialogView: View {
     @State private var newSubtaskTitle: String = ""
     @State private var editingSubtaskId: UUID? = nil
     @State private var editingSubtaskTitle: String = ""
+    @State private var newCommentText: String = ""
     @FocusState private var isSubtaskEditFocused: Bool
 
     public init(
@@ -36,7 +37,7 @@ public struct TaskModalDialogView: View {
     public var body: some View {
         VStack(spacing: 0) {
             // Modal Header Bar
-            HStack {
+            HStack(spacing: 10) {
                 HStack(spacing: 6) {
                     Image(systemName: "list.clipboard")
                         .font(.system(size: 13, weight: .semibold))
@@ -46,6 +47,40 @@ public struct TaskModalDialogView: View {
                 }
 
                 Spacer()
+
+                // Compact Focus indicator/trigger
+                if taskStore.activeTaskId == currentTask.id {
+                    HStack(spacing: 5) {
+                        Circle()
+                            .fill(timerManager.isRunning ? Color.orange : Color.secondary)
+                            .frame(width: 6, height: 6)
+                        Text(timerManager.isRunning ? "Focusing (\(timerManager.formattedTime))" : "Active Focus")
+                            .font(.system(size: 11, weight: .semibold))
+                            .foregroundStyle(timerManager.isRunning ? Color.orange : Color.secondary)
+                    }
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .background(Color.orange.opacity(0.12))
+                    .clipShape(Capsule())
+                } else {
+                    Button(action: {
+                        taskStore.selectTask(id: currentTask.id)
+                        timerManager.syncWithActiveTask()
+                    }) {
+                        HStack(spacing: 4) {
+                            Image(systemName: "target")
+                                .font(.system(size: 10))
+                            Text("Set as Focus")
+                                .font(.system(size: 11, weight: .medium))
+                        }
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 4)
+                        .background(Color.primary.opacity(0.06))
+                        .clipShape(Capsule())
+                    }
+                    .buttonStyle(.plain)
+                    .help("Set this task as active focus for the bottom music player bar")
+                }
 
                 Button(action: onClose) {
                     Image(systemName: "xmark")
@@ -67,9 +102,6 @@ public struct TaskModalDialogView: View {
             // Scrollable Detail Body
             ScrollView {
                 VStack(alignment: .leading, spacing: 20) {
-                    // Focus Session Hero Card
-                    focusSessionCard(task: currentTask)
-
                     // Core Task Fields (Title, Notes, Board, Priority, List)
                     taskFieldsSection(task: currentTask)
 
@@ -77,154 +109,17 @@ public struct TaskModalDialogView: View {
 
                     // Subtasks Checklist
                     subtasksSection(task: currentTask)
+
+                    Divider()
+
+                    // Comments & Activity
+                    commentsSection(task: currentTask)
                 }
                 .padding(20)
             }
         }
-        .frame(width: 540, height: 620)
+        .frame(width: 560, height: 620)
         .background(.regularMaterial)
-    }
-
-    // MARK: - Focus Session Hero Card
-    private func focusSessionCard(task: TaskItem) -> some View {
-        let isCurrentActive = timerManager.isRunning && taskStore.activeTaskId == task.id
-
-        return VStack(spacing: 14) {
-            HStack {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("FOCUS TIMER")
-                        .font(.system(size: 9, weight: .bold))
-                        .foregroundStyle(.secondary)
-                    Text(isCurrentActive ? "Session in Progress" : (timerManager.state == .paused && taskStore.activeTaskId == task.id ? "Session Paused" : "Ready to Focus"))
-                        .font(.system(size: 12, weight: .semibold))
-                }
-
-                Spacer()
-
-                // Mode switch buttons
-                HStack(spacing: 8) {
-                    Button(action: onLaunchNotchMode) {
-                        HStack(spacing: 4) {
-                            Image(systemName: "menubar.arrow.up.rectangle")
-                                .font(.system(size: 10))
-                            Text("Notch Pill")
-                                .font(.system(size: 10, weight: .semibold))
-                        }
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 4)
-                        .background(Color.orange.opacity(0.15))
-                        .foregroundStyle(.orange)
-                        .clipShape(Capsule())
-                    }
-                    .buttonStyle(.plain)
-                    .help("Minimize to MacBook Notch Dynamic Island")
-
-                    Button(action: onLaunchTowerMode) {
-                        HStack(spacing: 4) {
-                            Image(systemName: "rectangle.inset.filled.and.cursorarrow")
-                                .font(.system(size: 10))
-                            Text("Tower")
-                                .font(.system(size: 10, weight: .semibold))
-                        }
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 4)
-                        .background(Color.primary.opacity(0.08))
-                        .foregroundStyle(.primary)
-                        .clipShape(Capsule())
-                    }
-                    .buttonStyle(.plain)
-                    .help("Pop out as Floating Desktop Card")
-                }
-            }
-
-            // Big Timer Display
-            HStack(spacing: 24) {
-                ZStack {
-                    ProgressRing(
-                        progress: timerManager.progress,
-                        lineWidth: 6,
-                        ringColor: isCurrentActive ? .orange : .secondary
-                    )
-                    .frame(width: 85, height: 85)
-
-                    VStack(spacing: 2) {
-                        Text(timerManager.formattedTime)
-                            .font(.system(size: 19, weight: .bold, design: .monospaced))
-                            .foregroundStyle(isCurrentActive ? Color.orange : Color.primary)
-                    }
-                }
-
-                VStack(alignment: .leading, spacing: 10) {
-                    // Play / Pause Button
-                    Button(action: {
-                        if taskStore.activeTaskId != task.id {
-                            taskStore.selectTask(id: task.id)
-                            timerManager.syncWithActiveTask()
-                        }
-                        timerManager.toggle()
-                    }) {
-                        HStack(spacing: 8) {
-                            Image(systemName: isCurrentActive ? "pause.fill" : "play.fill")
-                                .font(.system(size: 13, weight: .bold))
-                            Text(isCurrentActive ? "Pause Focus" : "Start Focus")
-                                .font(.system(size: 13, weight: .semibold))
-                        }
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 8)
-                        .background(Color.orange)
-                        .foregroundStyle(.black)
-                        .clipShape(RoundedRectangle(cornerRadius: 8))
-                    }
-                    .buttonStyle(.plain)
-
-                    HStack(spacing: 8) {
-                        Button(action: { timerManager.reset() }) {
-                            Text("Reset")
-                                .font(.system(size: 11, weight: .medium))
-                                .frame(maxWidth: .infinity)
-                                .padding(.vertical, 6)
-                                .background(Color.secondary.opacity(0.12))
-                                .clipShape(RoundedRectangle(cornerRadius: 6))
-                                .contentShape(RoundedRectangle(cornerRadius: 6))
-                        }
-                        .buttonStyle(.plain)
-
-                        Button(action: {
-                            timerManager.completeCurrentSession()
-                        }) {
-                            Text("Mark Done")
-                                .font(.system(size: 11, weight: .medium))
-                                .frame(maxWidth: .infinity)
-                                .padding(.vertical, 6)
-                                .background(Color.green.opacity(0.15))
-                                .foregroundStyle(.green)
-                                .clipShape(RoundedRectangle(cornerRadius: 6))
-                                .contentShape(RoundedRectangle(cornerRadius: 6))
-                        }
-                        .buttonStyle(.plain)
-                    }
-                }
-            }
-
-            HStack {
-                Text("Time Spent: \(task.formattedTimeSpent)")
-                    .font(.system(size: 11, design: .monospaced))
-                    .foregroundStyle(.secondary)
-                Spacer()
-                Text("Estimate: \(task.formattedEstimate)")
-                    .font(.system(size: 11, design: .monospaced))
-                    .foregroundStyle(.secondary)
-            }
-        }
-        .padding(14)
-        .background(
-            RoundedRectangle(cornerRadius: 12)
-                .fill(Color.primary.opacity(0.04))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 12)
-                        .strokeBorder(Color.primary.opacity(0.08), lineWidth: 1)
-                )
-        )
     }
 
     // MARK: - Task Fields Section
@@ -483,5 +378,106 @@ public struct TaskModalDialogView: View {
     private func submitSubtask(taskId: UUID) {
         taskStore.addSubtask(to: taskId, title: newSubtaskTitle)
         newSubtaskTitle = ""
+    }
+
+    // MARK: - Comments Section
+    private func commentsSection(task: TaskItem) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 6) {
+                Image(systemName: "bubble.left.and.bubble.right")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(Color.orange)
+                Text("COMMENTS & ACTIVITY")
+                    .font(.system(size: 9, weight: .bold))
+                    .foregroundStyle(.secondary)
+                Text("\(task.comments.count)")
+                    .font(.system(size: 9, weight: .bold, design: .monospaced))
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 5)
+                    .padding(.vertical, 1)
+                    .background(Color.primary.opacity(0.06))
+                    .clipShape(Capsule())
+            }
+
+            if task.comments.isEmpty {
+                Text("No comments yet. Leave a note or progress update below.")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.tertiary)
+                    .padding(.vertical, 4)
+            } else {
+                VStack(spacing: 8) {
+                    ForEach(task.comments) { comment in
+                        HStack(alignment: .top, spacing: 10) {
+                            ZStack {
+                                Circle()
+                                    .fill(Color.orange.opacity(0.18))
+                                    .frame(width: 24, height: 24)
+                                Text(String(comment.author.prefix(1)).uppercased())
+                                    .font(.system(size: 10, weight: .bold))
+                                    .foregroundStyle(Color.orange)
+                            }
+
+                            VStack(alignment: .leading, spacing: 3) {
+                                HStack(spacing: 6) {
+                                    Text(comment.author)
+                                        .font(.system(size: 11, weight: .semibold))
+                                    Text(comment.formattedDate)
+                                        .font(.system(size: 10))
+                                        .foregroundStyle(.tertiary)
+                                    Spacer()
+                                    Button(action: {
+                                        taskStore.deleteComment(taskId: task.id, commentId: comment.id)
+                                    }) {
+                                        Image(systemName: "xmark")
+                                            .font(.system(size: 9))
+                                            .foregroundStyle(.secondary.opacity(0.6))
+                                    }
+                                    .buttonStyle(.plain)
+                                    .help("Delete Comment")
+                                }
+
+                                Text(comment.content)
+                                    .font(.system(size: 12))
+                                    .foregroundStyle(.primary)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
+                        }
+                        .padding(8)
+                        .background(Color.primary.opacity(0.03))
+                        .clipShape(RoundedRectangle(cornerRadius: 8))
+                    }
+                }
+            }
+
+            // Comment input bar
+            HStack(spacing: 8) {
+                TextField("Add a comment and press Enter...", text: $newCommentText)
+                    .textFieldStyle(.plain)
+                    .font(.system(size: 12))
+                    .onSubmit {
+                        submitComment(taskId: task.id)
+                    }
+
+                if !newCommentText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    Button("Post") {
+                        submitComment(taskId: task.id)
+                    }
+                    .font(.system(size: 11, weight: .semibold))
+                    .buttonStyle(.plain)
+                    .foregroundStyle(.orange)
+                }
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 7)
+            .background(Color.primary.opacity(0.04))
+            .clipShape(RoundedRectangle(cornerRadius: 8))
+        }
+    }
+
+    private func submitComment(taskId: UUID) {
+        let trimmed = newCommentText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        taskStore.addComment(to: taskId, author: "You", content: trimmed)
+        newCommentText = ""
     }
 }

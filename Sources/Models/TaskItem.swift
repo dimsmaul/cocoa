@@ -32,6 +32,7 @@ public enum ListColorChoice: String, CaseIterable, Identifiable, Codable, Sendab
 }
 
 public enum TaskBoard: String, Codable, CaseIterable, Sendable {
+    case inbox = "Inbox"
     case today = "Today"
     case upcoming = "Upcoming"
     case backlog = "Backlog"
@@ -39,9 +40,10 @@ public enum TaskBoard: String, Codable, CaseIterable, Sendable {
 
     public var iconName: String {
         switch self {
+        case .inbox: return "tray.fill"
         case .today: return "sun.max.fill"
         case .upcoming: return "calendar"
-        case .backlog: return "tray.full.fill"
+        case .backlog: return "archivebox.fill"
         case .done: return "checkmark.circle.fill"
         }
     }
@@ -65,11 +67,56 @@ public struct SubtaskItem: Identifiable, Codable, Equatable, Sendable {
     public let id: UUID
     public var title: String
     public var isCompleted: Bool
+    public var subtasks: [SubtaskItem]
 
-    public init(id: UUID = UUID(), title: String, isCompleted: Bool = false) {
+    public init(id: UUID = UUID(), title: String, isCompleted: Bool = false, subtasks: [SubtaskItem] = []) {
         self.id = id
         self.title = title
         self.isCompleted = isCompleted
+        self.subtasks = subtasks
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case id, title, isCompleted, subtasks
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.id = try container.decode(UUID.self, forKey: .id)
+        self.title = try container.decode(String.self, forKey: .title)
+        self.isCompleted = try container.decode(Bool.self, forKey: .isCompleted)
+        self.subtasks = try container.decodeIfPresent([SubtaskItem].self, forKey: .subtasks) ?? []
+    }
+}
+
+public struct TaskComment: Identifiable, Codable, Equatable, Sendable {
+    public let id: UUID
+    public var author: String
+    public var content: String
+    public var createdAt: Date
+
+    public init(id: UUID = UUID(), author: String = "You", content: String, createdAt: Date = Date()) {
+        self.id = id
+        self.author = author
+        self.content = content
+        self.createdAt = createdAt
+    }
+
+    public var formattedDate: String {
+        let calendar = Calendar.current
+        if calendar.isDateInToday(createdAt) {
+            let formatter = DateFormatter()
+            formatter.dateFormat = "h:mm a"
+            return "Today at \(formatter.string(from: createdAt))"
+        } else if calendar.isDateInYesterday(createdAt) {
+            let formatter = DateFormatter()
+            formatter.dateFormat = "h:mm a"
+            return "Yesterday at \(formatter.string(from: createdAt))"
+        } else {
+            let formatter = DateFormatter()
+            formatter.dateFormat = "MMM d, h:mm a"
+            return formatter.string(from: createdAt)
+        }
     }
 }
 
@@ -83,6 +130,7 @@ public struct TaskItem: Identifiable, Codable, Equatable, Sendable {
     public var priority: TaskPriority
     public var listName: String
     public var subtasks: [SubtaskItem]
+    public var comments: [TaskComment]
     public var completedAt: Date?
     public var createdAt: Date
     public var board: TaskBoard
@@ -98,6 +146,7 @@ public struct TaskItem: Identifiable, Codable, Equatable, Sendable {
         priority: TaskPriority = .medium,
         listName: String = "General",
         subtasks: [SubtaskItem] = [],
+        comments: [TaskComment] = [],
         completedAt: Date? = nil,
         createdAt: Date = Date(),
         board: TaskBoard = .today,
@@ -112,6 +161,7 @@ public struct TaskItem: Identifiable, Codable, Equatable, Sendable {
         self.priority = priority
         self.listName = listName
         self.subtasks = subtasks
+        self.comments = comments
         self.completedAt = completedAt
         self.createdAt = createdAt
         self.board = board
@@ -124,6 +174,29 @@ public struct TaskItem: Identifiable, Codable, Equatable, Sendable {
         } else {
             self.dueDate = nil
         }
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case id, title, notes, estimatedMinutes, timeSpentSeconds, isCompleted, priority
+        case listName, subtasks, comments, completedAt, createdAt, board, dueDate
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.id = try container.decode(UUID.self, forKey: .id)
+        self.title = try container.decode(String.self, forKey: .title)
+        self.notes = try container.decodeIfPresent(String.self, forKey: .notes) ?? ""
+        self.estimatedMinutes = try container.decodeIfPresent(Int.self, forKey: .estimatedMinutes) ?? 25
+        self.timeSpentSeconds = try container.decodeIfPresent(Int.self, forKey: .timeSpentSeconds) ?? 0
+        self.isCompleted = try container.decodeIfPresent(Bool.self, forKey: .isCompleted) ?? false
+        self.priority = try container.decodeIfPresent(TaskPriority.self, forKey: .priority) ?? .medium
+        self.listName = try container.decodeIfPresent(String.self, forKey: .listName) ?? "General"
+        self.subtasks = try container.decodeIfPresent([SubtaskItem].self, forKey: .subtasks) ?? []
+        self.comments = try container.decodeIfPresent([TaskComment].self, forKey: .comments) ?? []
+        self.completedAt = try container.decodeIfPresent(Date.self, forKey: .completedAt)
+        self.createdAt = try container.decodeIfPresent(Date.self, forKey: .createdAt) ?? Date()
+        self.board = try container.decodeIfPresent(TaskBoard.self, forKey: .board) ?? .today
+        self.dueDate = try container.decodeIfPresent(Date.self, forKey: .dueDate)
     }
 
     public var formattedDueDate: String? {

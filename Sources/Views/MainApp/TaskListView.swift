@@ -3,6 +3,7 @@ import SwiftUI
 public struct TaskListView: View {
     @Bindable var taskStore: TaskStore
     @Bindable var timerManager: TimerManager
+    public var onOpenDetail: ((TaskItem) -> Void)? = nil
 
     @State private var newTaskTitle: String = ""
     @State private var newEstimatedMinutes: Int = 25
@@ -10,9 +11,14 @@ public struct TaskListView: View {
     @State private var editingList: EditableListTarget? = nil
     @FocusState private var isInputFocused: Bool
 
-    public init(taskStore: TaskStore, timerManager: TimerManager) {
+    public init(
+        taskStore: TaskStore,
+        timerManager: TimerManager,
+        onOpenDetail: ((TaskItem) -> Void)? = nil
+    ) {
         self.taskStore = taskStore
         self.timerManager = timerManager
+        self.onOpenDetail = onOpenDetail
     }
 
     private var sectionTitle: String {
@@ -93,13 +99,53 @@ public struct TaskListView: View {
                     Image(systemName: "tray")
                         .font(.system(size: 36))
                         .foregroundStyle(.tertiary)
-                    Text("No tasks found")
+                    Text(isInboxSection ? "Inbox Zero" : "No tasks found")
                         .font(.system(size: 14, weight: .medium))
                         .foregroundStyle(.secondary)
-                    Text("Add a task below or choose a different section.")
+                    Text(isInboxSection ? "All caught up! Add a new task below." : "Add a task below or choose a different section.")
                         .font(.system(size: 12))
                         .foregroundStyle(.tertiary)
                     Spacer()
+                }
+            } else if isInboxSection {
+                ScrollView {
+                    LazyVStack(alignment: .leading, spacing: 14) {
+                        if !overdueTasks.isEmpty {
+                            inboxGroupView(
+                                title: "Overdue",
+                                icon: "exclamationmark.circle.fill",
+                                color: .red,
+                                tasks: overdueTasks
+                            )
+                        }
+
+                        inboxGroupView(
+                            title: todaySectionTitle,
+                            icon: "sun.max.fill",
+                            color: .orange,
+                            tasks: todayGroupTasks
+                        )
+
+                        if !upcomingGroupTasks.isEmpty {
+                            inboxGroupView(
+                                title: "Upcoming",
+                                icon: "calendar",
+                                color: .purple,
+                                tasks: upcomingGroupTasks
+                            )
+                        }
+
+                        if !noDateTasks.isEmpty {
+                            inboxGroupView(
+                                title: "No Date",
+                                icon: "tray.fill",
+                                color: .secondary,
+                                tasks: noDateTasks
+                            )
+                        }
+                    }
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 12)
                 }
             } else {
                 ScrollView {
@@ -224,6 +270,7 @@ public struct TaskListView: View {
         .onTapGesture {
             taskStore.selectTask(id: task.id)
             timerManager.syncWithActiveTask()
+            onOpenDetail?(task)
         }
     }
 
@@ -320,5 +367,108 @@ public struct TaskListView: View {
         .padding(.vertical, 2.5)
         .background(color.opacity(0.12))
         .clipShape(Capsule())
+    }
+
+    // MARK: - Inbox Grouping Helpers
+    private var isInboxSection: Bool {
+        if case .board(let board) = taskStore.selectedSection, board == .inbox {
+            return true
+        }
+        return false
+    }
+
+    private var todaySectionTitle: String {
+        let now = Date()
+        let dayMonth = DateFormatter()
+        dayMonth.dateFormat = "d MMM"
+        let weekday = DateFormatter()
+        weekday.dateFormat = "EEEE"
+        return "\(dayMonth.string(from: now)) . Today . \(weekday.string(from: now))"
+    }
+
+    private var overdueTasks: [TaskItem] {
+        let startOfToday = Calendar.current.startOfDay(for: Date())
+        return taskStore.filteredTasks.filter { task in
+            guard let due = task.dueDate else { return false }
+            return due < startOfToday && !task.isCompleted
+        }
+    }
+
+    private var todayGroupTasks: [TaskItem] {
+        return taskStore.filteredTasks.filter { task in
+            if let due = task.dueDate {
+                return Calendar.current.isDateInToday(due) && !task.isCompleted
+            } else {
+                return (task.board == .today || task.board == .inbox) && !task.isCompleted
+            }
+        }
+    }
+
+    private var upcomingGroupTasks: [TaskItem] {
+        let calendar = Calendar.current
+        guard let tomorrow = calendar.date(byAdding: .day, value: 1, to: calendar.startOfDay(for: Date())) else { return [] }
+        return taskStore.filteredTasks.filter { task in
+            if let due = task.dueDate {
+                return due >= tomorrow && !task.isCompleted
+            } else {
+                return task.board == .upcoming && !task.isCompleted
+            }
+        }
+    }
+
+    private var noDateTasks: [TaskItem] {
+        let overdueIds = Set(overdueTasks.map(\.id))
+        let todayIds = Set(todayGroupTasks.map(\.id))
+        let upcomingIds = Set(upcomingGroupTasks.map(\.id))
+        return taskStore.filteredTasks.filter { task in
+            !task.isCompleted && !overdueIds.contains(task.id) && !todayIds.contains(task.id) && !upcomingIds.contains(task.id)
+        }
+    }
+
+    private func inboxGroupView(
+        title: String,
+        icon: String,
+        color: Color,
+        tasks: [TaskItem]
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            // Group Header with clean line
+            HStack(spacing: 8) {
+                Image(systemName: icon)
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(color)
+
+                Text(title)
+                    .font(.system(size: 12, weight: .bold))
+                    .foregroundStyle(Color.primary)
+
+                Text("\(tasks.count)")
+                    .font(.system(size: 10, weight: .bold, design: .monospaced))
+                    .foregroundStyle(color)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 1.5)
+                    .background(color.opacity(0.12))
+                    .clipShape(Capsule())
+
+                // Clean divider line extending to the right
+                Rectangle()
+                    .fill(Color.primary.opacity(0.08))
+                    .frame(height: 1)
+            }
+            .padding(.top, 8)
+            .padding(.bottom, 2)
+
+            if tasks.isEmpty {
+                Text("No tasks")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.tertiary)
+                    .padding(.leading, 12)
+                    .padding(.vertical, 4)
+            } else {
+                ForEach(tasks) { task in
+                    taskCard(task: task)
+                }
+            }
+        }
     }
 }

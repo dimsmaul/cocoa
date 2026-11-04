@@ -131,6 +131,7 @@ public struct SidebarView: View {
 
     private func boardColor(for board: TaskBoard) -> Color {
         switch board {
+        case .inbox: return Color(red: 0.35, green: 0.55, blue: 0.95)
         case .today: return .orange
         case .upcoming: return .blue
         case .backlog: return .purple
