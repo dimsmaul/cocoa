@@ -91,6 +91,7 @@ public struct NewListDialogView: View {
                         .contentShape(RoundedRectangle(cornerRadius: 8))
                 }
                 .buttonStyle(.plain)
+                .contentShape(RoundedRectangle(cornerRadius: 8))
                 .keyboardShortcut(.cancelAction)
 
                 Button(action: {
@@ -106,6 +107,7 @@ public struct NewListDialogView: View {
                         .contentShape(RoundedRectangle(cornerRadius: 8))
                 }
                 .buttonStyle(.plain)
+                .contentShape(RoundedRectangle(cornerRadius: 8))
                 .keyboardShortcut(.defaultAction)
                 .disabled(name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             }
