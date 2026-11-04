@@ -12,6 +12,9 @@ public struct FloatingTowerView: View {
     @State private var isSubtasksExpanded: Bool = true
     @State private var showNotesInline: Bool = false
     @State private var newSubtaskTitle: String = ""
+    @State private var editingSubtaskId: UUID? = nil
+    @State private var editingSubtaskTitle: String = ""
+    @FocusState private var isSubtaskEditFocused: Bool
     @State private var showDetailModal: Bool = false
 
     public init(
@@ -302,34 +305,134 @@ public struct FloatingTowerView: View {
                                     .padding(.vertical, 2)
                             } else {
                                 ForEach(active.subtasks) { subtask in
-                                    HStack(spacing: 6) {
-                                        Button(action: {
-                                            taskStore.toggleSubtask(in: active.id, subtaskId: subtask.id)
-                                        }) {
-                                            Image(systemName: subtask.isCompleted ? "checkmark.circle.fill" : "circle")
-                                                .font(.system(size: 12))
-                                                .foregroundStyle(subtask.isCompleted ? Color.green : Color.secondary)
+                                    if editingSubtaskId == subtask.id {
+                                        HStack(spacing: 4) {
+                                            Image(systemName: "pencil")
+                                                .font(.system(size: 9))
+                                                .foregroundStyle(.orange)
+
+                                            TextField("Edit subtask...", text: $editingSubtaskTitle)
+                                                .textFieldStyle(.plain)
+                                                .font(.system(size: 11))
+                                                .focused($isSubtaskEditFocused)
+                                                .onSubmit {
+                                                    let trimmed = editingSubtaskTitle.trimmingCharacters(in: .whitespacesAndNewlines)
+                                                    if !trimmed.isEmpty {
+                                                        taskStore.updateSubtask(in: active.id, subtaskId: subtask.id, newTitle: trimmed)
+                                                    }
+                                                    editingSubtaskId = nil
+                                                    editingSubtaskTitle = ""
+                                                    isSubtaskEditFocused = false
+                                                }
+                                                .onExitCommand {
+                                                    editingSubtaskId = nil
+                                                    editingSubtaskTitle = ""
+                                                    isSubtaskEditFocused = false
+                                                }
+
+                                            Button(action: {
+                                                let trimmed = editingSubtaskTitle.trimmingCharacters(in: .whitespacesAndNewlines)
+                                                if !trimmed.isEmpty {
+                                                    taskStore.updateSubtask(in: active.id, subtaskId: subtask.id, newTitle: trimmed)
+                                                }
+                                                editingSubtaskId = nil
+                                                editingSubtaskTitle = ""
+                                                isSubtaskEditFocused = false
+                                            }) {
+                                                Image(systemName: "checkmark.circle.fill")
+                                                    .font(.system(size: 11))
+                                                    .foregroundStyle(.green)
+                                            }
+                                            .buttonStyle(.plain)
+
+                                            Button(action: {
+                                                editingSubtaskId = nil
+                                                editingSubtaskTitle = ""
+                                                isSubtaskEditFocused = false
+                                            }) {
+                                                Image(systemName: "xmark.circle.fill")
+                                                    .font(.system(size: 11))
+                                                    .foregroundStyle(.secondary)
+                                            }
+                                            .buttonStyle(.plain)
                                         }
-                                        .buttonStyle(.plain)
+                                        .padding(.horizontal, 4)
+                                        .padding(.vertical, 2)
+                                        .background(Color.orange.opacity(0.1))
+                                        .clipShape(RoundedRectangle(cornerRadius: 4))
+                                    } else {
+                                        HStack(spacing: 6) {
+                                            Button(action: {
+                                                taskStore.toggleSubtask(in: active.id, subtaskId: subtask.id)
+                                            }) {
+                                                Image(systemName: subtask.isCompleted ? "checkmark.circle.fill" : "circle")
+                                                    .font(.system(size: 12))
+                                                    .foregroundStyle(subtask.isCompleted ? Color.green : Color.secondary)
+                                            }
+                                            .buttonStyle(.plain)
 
-                                        Text(subtask.title)
-                                            .font(.system(size: 11))
-                                            .strikethrough(subtask.isCompleted)
-                                            .foregroundStyle(subtask.isCompleted ? .secondary : .primary)
-                                            .lineLimit(1)
+                                            Text(subtask.title)
+                                                .font(.system(size: 11))
+                                                .strikethrough(subtask.isCompleted)
+                                                .foregroundStyle(subtask.isCompleted ? .secondary : .primary)
+                                                .lineLimit(1)
+                                                .contentShape(Rectangle())
+                                                .onTapGesture(count: 2) {
+                                                    editingSubtaskId = subtask.id
+                                                    editingSubtaskTitle = subtask.title
+                                                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+                                                        isSubtaskEditFocused = true
+                                                    }
+                                                }
 
-                                        Spacer()
+                                            Spacer()
 
-                                        Button(action: {
-                                            taskStore.deleteSubtask(in: active.id, subtaskId: subtask.id)
-                                        }) {
-                                            Image(systemName: "xmark")
-                                                .font(.system(size: 8))
-                                                .foregroundStyle(.tertiary)
+                                            HStack(spacing: 4) {
+                                                Button(action: {
+                                                    editingSubtaskId = subtask.id
+                                                    editingSubtaskTitle = subtask.title
+                                                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+                                                        isSubtaskEditFocused = true
+                                                    }
+                                                }) {
+                                                    Image(systemName: "pencil")
+                                                        .font(.system(size: 9))
+                                                        .foregroundStyle(.secondary.opacity(0.7))
+                                                }
+                                                .buttonStyle(.plain)
+                                                .help("Edit Subtask")
+
+                                                Button(action: {
+                                                    taskStore.deleteSubtask(in: active.id, subtaskId: subtask.id)
+                                                }) {
+                                                    Image(systemName: "xmark")
+                                                        .font(.system(size: 8))
+                                                        .foregroundStyle(.tertiary)
+                                                }
+                                                .buttonStyle(.plain)
+                                                .help("Delete Subtask")
+                                            }
                                         }
-                                        .buttonStyle(.plain)
+                                        .padding(.vertical, 1)
+                                        .contentShape(Rectangle())
+                                        .contextMenu {
+                                            Button {
+                                                editingSubtaskId = subtask.id
+                                                editingSubtaskTitle = subtask.title
+                                                DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+                                                    isSubtaskEditFocused = true
+                                                }
+                                            } label: {
+                                                Label("Edit Subtask", systemImage: "pencil")
+                                            }
+
+                                            Button(role: .destructive) {
+                                                taskStore.deleteSubtask(in: active.id, subtaskId: subtask.id)
+                                            } label: {
+                                                Label("Delete Subtask", systemImage: "trash")
+                                            }
+                                        }
                                     }
-                                    .padding(.vertical, 1)
                                 }
                             }
 

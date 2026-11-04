@@ -7,6 +7,9 @@ public struct TaskDetailView: View {
     public var onLaunchTowerMode: () -> Void
 
     @State private var newSubtaskTitle: String = ""
+    @State private var editingSubtaskId: UUID? = nil
+    @State private var editingSubtaskTitle: String = ""
+    @FocusState private var isSubtaskEditFocused: Bool
     @State private var isBreakingDownWithAI: Bool = false
     @State private var aiErrorMessage: String? = nil
 
@@ -342,33 +345,112 @@ public struct TaskDetailView: View {
 
             // Subtask rows
             ForEach(task.subtasks) { sub in
-                HStack(spacing: 8) {
-                    Button(action: {
-                        taskStore.toggleSubtask(in: task.id, subtaskId: sub.id)
-                    }) {
-                        Image(systemName: sub.isCompleted ? "checkmark.square.fill" : "square")
-                            .font(.system(size: 14))
-                            .foregroundStyle(sub.isCompleted ? Color.green : Color.secondary)
+                if editingSubtaskId == sub.id {
+                    HStack(spacing: 8) {
+                        Image(systemName: "pencil")
+                            .font(.system(size: 11))
+                            .foregroundStyle(.orange)
+
+                        TextField("Subtask title...", text: $editingSubtaskTitle)
+                            .textFieldStyle(.plain)
+                            .font(.system(size: 12))
+                            .focused($isSubtaskEditFocused)
+                            .onSubmit {
+                                saveSubtaskEdit(taskId: task.id, subtaskId: sub.id)
+                            }
+                            .onExitCommand {
+                                cancelSubtaskEdit()
+                            }
+
+                        Button(action: {
+                            saveSubtaskEdit(taskId: task.id, subtaskId: sub.id)
+                        }) {
+                            Image(systemName: "checkmark.circle.fill")
+                                .font(.system(size: 13))
+                                .foregroundStyle(.green)
+                        }
+                        .buttonStyle(.plain)
+                        .help("Save (Enter)")
+
+                        Button(action: {
+                            cancelSubtaskEdit()
+                        }) {
+                            Image(systemName: "xmark.circle.fill")
+                                .font(.system(size: 13))
+                                .foregroundStyle(.secondary)
+                        }
+                        .buttonStyle(.plain)
+                        .help("Cancel (Esc)")
                     }
-                    .buttonStyle(.plain)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .background(Color.orange.opacity(0.08))
+                    .clipShape(RoundedRectangle(cornerRadius: 6))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 6)
+                            .stroke(Color.orange.opacity(0.3), lineWidth: 1)
+                    )
+                } else {
+                    HStack(spacing: 8) {
+                        Button(action: {
+                            taskStore.toggleSubtask(in: task.id, subtaskId: sub.id)
+                        }) {
+                            Image(systemName: sub.isCompleted ? "checkmark.square.fill" : "square")
+                                .font(.system(size: 14))
+                                .foregroundStyle(sub.isCompleted ? Color.green : Color.secondary)
+                        }
+                        .buttonStyle(.plain)
 
-                    Text(sub.title)
-                        .font(.system(size: 12))
-                        .strikethrough(sub.isCompleted)
-                        .foregroundStyle(sub.isCompleted ? .secondary : .primary)
+                        Text(sub.title)
+                            .font(.system(size: 12))
+                            .strikethrough(sub.isCompleted)
+                            .foregroundStyle(sub.isCompleted ? .secondary : .primary)
+                            .contentShape(Rectangle())
+                            .onTapGesture(count: 2) {
+                                startEditingSubtask(sub)
+                            }
 
-                    Spacer()
+                        Spacer()
 
-                    Button(action: {
-                        taskStore.deleteSubtask(in: task.id, subtaskId: sub.id)
-                    }) {
-                        Image(systemName: "xmark")
-                            .font(.system(size: 10))
-                            .foregroundStyle(.secondary.opacity(0.5))
+                        HStack(spacing: 6) {
+                            Button(action: {
+                                startEditingSubtask(sub)
+                            }) {
+                                Image(systemName: "pencil")
+                                    .font(.system(size: 11))
+                                    .foregroundStyle(.secondary.opacity(0.7))
+                            }
+                            .buttonStyle(.plain)
+                            .help("Edit Subtask")
+
+                            Button(action: {
+                                taskStore.deleteSubtask(in: task.id, subtaskId: sub.id)
+                            }) {
+                                Image(systemName: "xmark")
+                                    .font(.system(size: 10))
+                                    .foregroundStyle(.secondary.opacity(0.5))
+                            }
+                            .buttonStyle(.plain)
+                            .help("Delete Subtask")
+                        }
                     }
-                    .buttonStyle(.plain)
+                    .padding(.vertical, 3)
+                    .padding(.horizontal, 4)
+                    .contentShape(Rectangle())
+                    .contextMenu {
+                        Button {
+                            startEditingSubtask(sub)
+                        } label: {
+                            Label("Edit Subtask", systemImage: "pencil")
+                        }
+
+                        Button(role: .destructive) {
+                            taskStore.deleteSubtask(in: task.id, subtaskId: sub.id)
+                        } label: {
+                            Label("Delete Subtask", systemImage: "trash")
+                        }
+                    }
                 }
-                .padding(.vertical, 3)
             }
 
             // Add Subtask row
@@ -397,6 +479,30 @@ public struct TaskDetailView: View {
             .background(Color.primary.opacity(0.04))
             .clipShape(RoundedRectangle(cornerRadius: 6))
         }
+    }
+
+    private func startEditingSubtask(_ sub: SubtaskItem) {
+        editingSubtaskId = sub.id
+        editingSubtaskTitle = sub.title
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+            isSubtaskEditFocused = true
+        }
+    }
+
+    private func saveSubtaskEdit(taskId: UUID, subtaskId: UUID) {
+        let trimmed = editingSubtaskTitle.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !trimmed.isEmpty {
+            taskStore.updateSubtask(in: taskId, subtaskId: subtaskId, newTitle: trimmed)
+        }
+        editingSubtaskId = nil
+        editingSubtaskTitle = ""
+        isSubtaskEditFocused = false
+    }
+
+    private func cancelSubtaskEdit() {
+        editingSubtaskId = nil
+        editingSubtaskTitle = ""
+        isSubtaskEditFocused = false
     }
 
     private func submitSubtask(taskId: UUID) {

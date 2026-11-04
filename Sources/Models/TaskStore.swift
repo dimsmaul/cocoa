@@ -281,6 +281,18 @@ public final class TaskStore: @unchecked Sendable {
         guard let taskIndex = tasks.firstIndex(where: { $0.id == taskId }),
               let subIndex = tasks[taskIndex].subtasks.firstIndex(where: { $0.id == subtaskId }) else { return }
         tasks[taskIndex].subtasks[subIndex].isCompleted.toggle()
+        if tasks[taskIndex].subtasks[subIndex].isCompleted {
+            SoundManager.shared.playSuccessSound()
+        }
+        save()
+    }
+
+    public func updateSubtask(in taskId: UUID, subtaskId: UUID, newTitle: String) {
+        guard let taskIndex = tasks.firstIndex(where: { $0.id == taskId }),
+              let subIndex = tasks[taskIndex].subtasks.firstIndex(where: { $0.id == subtaskId }) else { return }
+        let trimmed = newTitle.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        tasks[taskIndex].subtasks[subIndex].title = trimmed
         save()
     }
 

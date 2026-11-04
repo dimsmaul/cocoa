@@ -436,6 +436,19 @@ public final class MCPServerService: @unchecked Sendable {
                 ]
             ],
             [
+                "name": "cocoa_update_subtask",
+                "description": "Edit or rename an existing subtask/checklist item in a task.",
+                "inputSchema": [
+                    "type": "object",
+                    "required": ["subtask_id", "new_title"],
+                    "properties": [
+                        "task_id": ["type": "string", "description": "UUID of the task. If omitted, uses active task."],
+                        "subtask_id": ["type": "string", "description": "UUID of the subtask to update"],
+                        "new_title": ["type": "string", "description": "The new title text for the subtask"]
+                    ]
+                ]
+            ],
+            [
                 "name": "cocoa_complete_task",
                 "description": "Mark a task as completed.",
                 "inputSchema": [
@@ -583,6 +596,28 @@ public final class MCPServerService: @unchecked Sendable {
                     outputText = "Added \(subtaskList.count) subtasks to task '\(task.title)'."
                 } else {
                     outputText = "Error: Task not found."
+                }
+
+            case "cocoa_update_subtask":
+                guard let subtaskIdStr = args["subtask_id"] as? String, let subtaskId = UUID(uuidString: subtaskIdStr),
+                      let newTitle = args["new_title"] as? String, !newTitle.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                    outputText = "Error: 'subtask_id' and non-empty 'new_title' are required."
+                    semaphore.signal()
+                    return
+                }
+
+                let targetTaskId: UUID?
+                if let idStr = args["task_id"] as? String, let parsed = UUID(uuidString: idStr) {
+                    targetTaskId = parsed
+                } else {
+                    targetTaskId = taskStore.tasks.first(where: { $0.subtasks.contains(where: { $0.id == subtaskId }) })?.id ?? taskStore.activeTaskId
+                }
+
+                if let targetId = targetTaskId {
+                    taskStore.updateSubtask(in: targetId, subtaskId: subtaskId, newTitle: newTitle)
+                    outputText = "Updated subtask successfully to '\(newTitle)'."
+                } else {
+                    outputText = "Error: Task containing subtask \(subtaskId) not found."
                 }
 
             case "cocoa_complete_task":
