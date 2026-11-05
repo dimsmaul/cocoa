@@ -26,7 +26,9 @@ public struct MainAppView: View {
                 .frame(minWidth: 200, idealWidth: 220)
         } detail: {
             Group {
-                if taskStore.viewMode == .list {
+                if taskStore.selectedSection == .stats {
+                    FocusStatsView(taskStore: taskStore, timerManager: timerManager)
+                } else if taskStore.viewMode == .list {
                     TaskListView(
                         taskStore: taskStore,
                         timerManager: timerManager,
@@ -108,6 +110,7 @@ public struct MainAppView: View {
                         .clipShape(Capsule())
                     }
                     .buttonStyle(.plain)
+                    .contentShape(Rectangle())
                     .help("Minimize to MacBook Notch Dynamic Island")
 
                     // Tower button
@@ -125,6 +128,7 @@ public struct MainAppView: View {
                         .clipShape(Capsule())
                     }
                     .buttonStyle(.plain)
+                    .contentShape(Rectangle())
                     .help("Pop out as Floating Desktop Tower")
                 }
             }

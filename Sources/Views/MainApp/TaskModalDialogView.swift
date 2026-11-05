@@ -12,8 +12,10 @@ public struct TaskModalDialogView: View {
     @State private var editingSubtaskId: UUID? = nil
     @State private var editingSubtaskTitle: String = ""
     @State private var newCommentText: String = ""
-    @State private var sheetWindow: NSWindow? = nil
     @State private var clickMonitor: Any? = nil
+    @State private var isShowingProjectPopover: Bool = false
+    @State private var isShowingPriorityPopover: Bool = false
+    @State private var isShowingEstimatePopover: Bool = false
     @FocusState private var isSubtaskEditFocused: Bool
 
     public init(
@@ -36,119 +38,123 @@ public struct TaskModalDialogView: View {
         taskStore.tasks.first(where: { $0.id == task.id }) ?? task
     }
 
-    public var body: some View {
-        VStack(spacing: 0) {
-            // Header Bar
-            headerBar
+    private var isCurrentTaskRunning: Bool {
+        timerManager.isRunning && taskStore.activeTaskId == currentTask.id
+    }
 
-            Divider().opacity(0.12)
+    private var isCurrentTaskStarted: Bool {
+        let isCurrentActive = taskStore.activeTaskId == currentTask.id
+        return currentTask.timeSpentSeconds > 0 || (isCurrentActive && timerManager.state != .idle)
+    }
 
-            // 2-Column Todoist Layout: Main Content (Left) + Attributes Sidebar (Right)
-            HStack(spacing: 0) {
-                // Left Column: Task Checkbox, Title, Description, Subtasks, Comments
-                mainContentColumn(task: currentTask)
-
-                Divider().opacity(0.12)
-
-                // Right Column: Project, Date, Priority, Estimate, Board, Delete
-                metadataSidebar(task: currentTask)
-            }
-        }
-        .frame(width: 720, height: 560)
-        .background(.regularMaterial)
-        .background(WindowAccessor { window in
-            self.sheetWindow = window
-            setupOutsideClickMonitor(for: window)
-        })
-        .onDisappear {
-            removeOutsideClickMonitor()
+    private var currentTaskRemainingSeconds: Int {
+        if taskStore.activeTaskId == currentTask.id && (timerManager.isRunning || timerManager.state == .paused) {
+            return timerManager.remainingSeconds
+        } else if currentTask.timeSpentSeconds > 0 {
+            return max(0, currentTask.estimatedSeconds - currentTask.timeSpentSeconds)
+        } else {
+            return currentTask.estimatedSeconds
         }
     }
 
-    // MARK: - Header Bar (Todoist style: Project breadcrumb on left, Start + Close on right)
-    private var headerBar: some View {
-        HStack(spacing: 10) {
-            // Project/List Breadcrumb
-            HStack(spacing: 6) {
-                Image(systemName: "tray.fill")
-                    .font(.system(size: 11))
-                    .foregroundStyle(taskStore.colorForList(currentTask.listName))
-                Text(currentTask.listName)
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(.secondary)
-            }
-
-            Spacer()
-
-            // Start Focus Button with Play Icon
-            Button(action: {
-                if taskStore.activeTaskId != currentTask.id {
-                    taskStore.selectTask(id: currentTask.id)
-                    timerManager.syncWithActiveTask()
-                    timerManager.start()
-                } else {
-                    timerManager.toggle()
-                }
-            }) {
-                let isCurrentRunning = timerManager.isRunning && taskStore.activeTaskId == currentTask.id
-                HStack(spacing: 5) {
-                    Image(systemName: isCurrentRunning ? "pause.fill" : "play.fill")
-                        .font(.system(size: 10, weight: .bold))
-                    Text(isCurrentRunning ? "Pause" : "Start")
-                        .font(.system(size: 11, weight: .bold))
-                }
-                .padding(.horizontal, 10)
-                .padding(.vertical, 4.5)
-                .background(isCurrentRunning ? Color.orange.opacity(0.2) : Color.orange)
-                .foregroundStyle(isCurrentRunning ? Color.orange : Color.black)
-                .clipShape(Capsule())
-            }
-            .buttonStyle(.plain)
-            .help(timerManager.isRunning && taskStore.activeTaskId == currentTask.id ? "Pause Focus" : "Start Focus")
-
-            // Close Button
-            Button(action: onClose) {
-                Image(systemName: "xmark")
-                    .font(.system(size: 11, weight: .bold))
-                    .foregroundStyle(.secondary)
-                    .padding(6)
-                    .background(Color.primary.opacity(0.06))
-                    .clipShape(Circle())
-            }
-            .buttonStyle(.plain)
-            .keyboardShortcut(.cancelAction)
+    private var formattedRemainingMinutes: String {
+        let secs = currentTaskRemainingSeconds
+        let mins = secs / 60
+        if mins > 0 {
+            return "\(mins)m"
+        } else if secs > 0 {
+            return "\(secs)s"
+        } else {
+            return "\(max(1, currentTask.estimatedMinutes))m"
         }
-        .padding(.horizontal, 18)
-        .padding(.vertical, 12)
+    }
+
+    private var focusButtonText: String {
+        if isCurrentTaskRunning {
+            return "Pause"
+        } else if isCurrentTaskStarted {
+            return "Continue (\(formattedRemainingMinutes))"
+        } else {
+            return "Start"
+        }
+    }
+
+    public var body: some View {
+        // 2-Column Todoist Layout: Main Content (Left) + Attributes Sidebar (Right)
+        HStack(spacing: 0) {
+            // Left Column: Task Checkbox, Title, Description, Subtasks, Comments
+            mainContentColumn(task: currentTask)
+
+            Divider().opacity(0.12)
+
+            // Right Column: Focus Button, Project, Date, Priority, Estimate
+            metadataSidebar(task: currentTask)
+        }
+        .frame(width: 860, height: 640)
+        .background(.regularMaterial)
+        .background {
+            // Keeps Esc closing the dialog now that there is no visible close button.
+            Button("Close", action: onClose)
+                .keyboardShortcut(.cancelAction)
+                .opacity(0)
+        }
+        .onAppear(perform: setupOutsideClickMonitor)
+        .onDisappear(perform: removeOutsideClickMonitor)
+    }
+
+    // MARK: - Focus Button: Start / Continue (Xm) / Pause
+    private var focusButton: some View {
+        Button(action: {
+            if taskStore.activeTaskId != currentTask.id {
+                taskStore.selectTask(id: currentTask.id)
+                timerManager.reset()
+                timerManager.syncWithActiveTask()
+                timerManager.start()
+            } else {
+                timerManager.toggle()
+            }
+        }) {
+            HStack(spacing: 5) {
+                Image(systemName: isCurrentTaskRunning ? "pause.fill" : "play.fill")
+                    .font(.system(size: 11, weight: .bold))
+                Text(focusButtonText)
+                    .font(.system(size: 12, weight: .bold))
+            }
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 7)
+            .background(isCurrentTaskRunning ? Color.orange.opacity(0.2) : Color.orange)
+            .foregroundStyle(isCurrentTaskRunning ? Color.orange : Color.black)
+            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help(isCurrentTaskRunning ? "Pause Focus" : (isCurrentTaskStarted ? "Continue Focus" : "Start Focus"))
     }
 
     // MARK: - Left Main Content Column (~68% width)
     private func mainContentColumn(task: TaskItem) -> some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
-                // Task Checkbox + Title Row
-                HStack(alignment: .top, spacing: 12) {
+                // Task Checkbox + Title Row (Symmetrically aligned baseline)
+                HStack(alignment: .firstTextBaseline, spacing: 12) {
                     Button(action: {
                         taskStore.toggleCompleted(id: task.id)
                         timerManager.syncWithActiveTask()
                     }) {
                         Image(systemName: task.isCompleted ? "checkmark.circle.fill" : "circle")
-                            .font(.system(size: 20, weight: .medium))
+                            .font(.system(size: 18, weight: .regular))
                             .foregroundStyle(task.isCompleted ? Color.green : Color.secondary)
                     }
                     .buttonStyle(.plain)
-                    .padding(.top, 2)
 
                     TextField("Task Title", text: Binding(
                         get: { task.title },
                         set: { newTitle in
-                            if let index = taskStore.tasks.firstIndex(where: { $0.id == task.id }) {
-                                taskStore.tasks[index].title = newTitle
-                            }
+                            taskStore.updateTask(id: task.id) { $0.title = newTitle }
                         }
                     ), axis: .vertical)
                     .textFieldStyle(.plain)
-                    .font(.system(size: 17, weight: .semibold))
+                    .font(.system(size: 18, weight: .semibold))
                     .lineLimit(1...5)
                 }
 
@@ -172,7 +178,8 @@ public struct TaskModalDialogView: View {
                         ),
                         taskId: task.id,
                         baseFontSize: 13,
-                        minHeight: 90
+                        minHeight: 140,
+                        growsWithContent: true
                     )
                 }
 
@@ -192,47 +199,32 @@ public struct TaskModalDialogView: View {
 
     // MARK: - Right Attributes Sidebar (~32% width)
     private func metadataSidebar(task: TaskItem) -> some View {
-        VStack(alignment: .leading, spacing: 12) {
-            // Project / List
+        VStack(alignment: .leading, spacing: 14) {
+            focusButton
+
+            // Project
             VStack(alignment: .leading, spacing: 4) {
                 Text("Project")
-                    .font(.system(size: 10, weight: .medium))
+                    .font(.system(size: 11, weight: .medium))
                     .foregroundStyle(.secondary)
 
-                Menu {
-                    ForEach(taskStore.lists, id: \.self) { list in
-                        Button(action: {
-                            if let idx = taskStore.tasks.firstIndex(where: { $0.id == task.id }) {
-                                taskStore.tasks[idx].listName = list
-                            }
-                        }) {
-                            HStack {
-                                Text(list)
-                                if task.listName == list {
-                                    Image(systemName: "checkmark")
-                                }
-                            }
+                SidebarAttributeRow(
+                    icon: "folder.fill",
+                    iconColor: taskStore.colorForList(task.listName),
+                    text: task.listName,
+                    action: { isShowingProjectPopover.toggle() }
+                )
+                .popover(isPresented: $isShowingProjectPopover, arrowEdge: .bottom) {
+                    ProjectPickerPopover(
+                        lists: taskStore.lists,
+                        selectedList: task.listName,
+                        colorForList: { taskStore.colorForList($0) },
+                        onSelect: { newList in
+                            taskStore.updateTask(id: task.id) { $0.listName = newList }
+                            isShowingProjectPopover = false
                         }
-                    }
-                } label: {
-                    HStack(spacing: 6) {
-                        Image(systemName: "folder.fill")
-                            .font(.system(size: 11))
-                            .foregroundStyle(taskStore.colorForList(task.listName))
-                        Text(task.listName)
-                            .font(.system(size: 12, weight: .medium))
-                            .foregroundStyle(.primary)
-                        Spacer()
-                        Image(systemName: "chevron.up.chevron.down")
-                            .font(.system(size: 9))
-                            .foregroundStyle(.tertiary)
-                    }
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 5)
-                    .background(Color.primary.opacity(0.04))
-                    .clipShape(RoundedRectangle(cornerRadius: 6))
+                    )
                 }
-                .buttonStyle(.plain)
             }
 
             Divider().opacity(0.10)
@@ -240,10 +232,32 @@ public struct TaskModalDialogView: View {
             // Date
             VStack(alignment: .leading, spacing: 4) {
                 Text("Date")
-                    .font(.system(size: 10, weight: .medium))
+                    .font(.system(size: 11, weight: .medium))
                     .foregroundStyle(.secondary)
 
-                TaskDatePickerButton(task: task, taskStore: taskStore, width: 175)
+                TaskDatePickerButton(task: task, taskStore: taskStore)
+            }
+
+            Divider().opacity(0.10)
+
+            // Repeat
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Repeat")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(.secondary)
+
+                TaskRecurrencePickerButton(task: task, taskStore: taskStore)
+            }
+
+            Divider().opacity(0.10)
+
+            // Reminder
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Reminder")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(.secondary)
+
+                TaskReminderPickerButton(task: task, taskStore: taskStore)
             }
 
             Divider().opacity(0.10)
@@ -251,43 +265,24 @@ public struct TaskModalDialogView: View {
             // Priority
             VStack(alignment: .leading, spacing: 4) {
                 Text("Priority")
-                    .font(.system(size: 10, weight: .medium))
+                    .font(.system(size: 11, weight: .medium))
                     .foregroundStyle(.secondary)
 
-                Menu {
-                    ForEach(TaskPriority.allCases, id: \.self) { p in
-                        Button(action: {
-                            if let idx = taskStore.tasks.firstIndex(where: { $0.id == task.id }) {
-                                taskStore.tasks[idx].priority = p
-                            }
-                        }) {
-                            HStack {
-                                Text(p.rawValue)
-                                if task.priority == p {
-                                    Image(systemName: "checkmark")
-                                }
-                            }
+                SidebarAttributeRow(
+                    icon: "flag.fill",
+                    iconColor: priorityColor(task.priority),
+                    text: task.priority.rawValue,
+                    action: { isShowingPriorityPopover.toggle() }
+                )
+                .popover(isPresented: $isShowingPriorityPopover, arrowEdge: .bottom) {
+                    PriorityPickerPopover(
+                        selectedPriority: task.priority,
+                        onSelect: { newP in
+                            taskStore.updateTask(id: task.id) { $0.priority = newP }
+                            isShowingPriorityPopover = false
                         }
-                    }
-                } label: {
-                    HStack(spacing: 6) {
-                        Image(systemName: "flag.fill")
-                            .font(.system(size: 11))
-                            .foregroundStyle(priorityColor(task.priority))
-                        Text(task.priority.rawValue)
-                            .font(.system(size: 12, weight: .medium))
-                            .foregroundStyle(.primary)
-                        Spacer()
-                        Image(systemName: "chevron.up.chevron.down")
-                            .font(.system(size: 9))
-                            .foregroundStyle(.tertiary)
-                    }
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 5)
-                    .background(Color.primary.opacity(0.04))
-                    .clipShape(RoundedRectangle(cornerRadius: 6))
+                    )
                 }
-                .buttonStyle(.plain)
             }
 
             Divider().opacity(0.10)
@@ -295,101 +290,31 @@ public struct TaskModalDialogView: View {
             // Estimate
             VStack(alignment: .leading, spacing: 4) {
                 Text("Estimate")
-                    .font(.system(size: 10, weight: .medium))
+                    .font(.system(size: 11, weight: .medium))
                     .foregroundStyle(.secondary)
 
-                Menu {
-                    Button("15 mins") { updateEstimate(task: task, mins: 15) }
-                    Button("25 mins (Pomodoro)") { updateEstimate(task: task, mins: 25) }
-                    Button("45 mins") { updateEstimate(task: task, mins: 45) }
-                    Button("60 mins") { updateEstimate(task: task, mins: 60) }
-                } label: {
-                    HStack(spacing: 6) {
-                        Image(systemName: "timer")
-                            .font(.system(size: 11))
-                            .foregroundStyle(.secondary)
-                        Text(task.formattedEstimate)
-                            .font(.system(size: 12, weight: .medium, design: .monospaced))
-                            .foregroundStyle(.primary)
-                        Spacer()
-                        Image(systemName: "chevron.up.chevron.down")
-                            .font(.system(size: 9))
-                            .foregroundStyle(.tertiary)
-                    }
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 5)
-                    .background(Color.primary.opacity(0.04))
-                    .clipShape(RoundedRectangle(cornerRadius: 6))
-                }
-                .buttonStyle(.plain)
-            }
-
-            Divider().opacity(0.10)
-
-            // Board
-            VStack(alignment: .leading, spacing: 4) {
-                Text("Board")
-                    .font(.system(size: 10, weight: .medium))
-                    .foregroundStyle(.secondary)
-
-                Menu {
-                    ForEach(TaskBoard.allCases, id: \.self) { b in
-                        Button(action: {
-                            taskStore.moveTask(id: task.id, to: b)
-                        }) {
-                            HStack {
-                                Text(b.rawValue)
-                                if task.board == b {
-                                    Image(systemName: "checkmark")
-                                }
-                            }
+                SidebarAttributeRow(
+                    icon: "timer",
+                    iconColor: .secondary,
+                    text: task.formattedEstimate,
+                    action: { isShowingEstimatePopover.toggle() }
+                )
+                .popover(isPresented: $isShowingEstimatePopover, arrowEdge: .bottom) {
+                    EstimatePickerPopover(
+                        currentEstimate: task.estimatedMinutes,
+                        onSelect: { mins in
+                            updateEstimate(task: task, mins: mins)
+                            isShowingEstimatePopover = false
                         }
-                    }
-                } label: {
-                    HStack(spacing: 6) {
-                        Image(systemName: task.board.iconName)
-                            .font(.system(size: 11))
-                            .foregroundStyle(Color.orange)
-                        Text(task.board.rawValue)
-                            .font(.system(size: 12, weight: .medium))
-                            .foregroundStyle(.primary)
-                        Spacer()
-                        Image(systemName: "chevron.up.chevron.down")
-                            .font(.system(size: 9))
-                            .foregroundStyle(.tertiary)
-                    }
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 5)
-                    .background(Color.primary.opacity(0.04))
-                    .clipShape(RoundedRectangle(cornerRadius: 6))
+                    )
                 }
-                .buttonStyle(.plain)
             }
 
             Spacer()
-
-            Divider().opacity(0.10)
-
-            // Delete Task
-            Button(role: .destructive, action: {
-                taskStore.deleteTask(id: task.id)
-                timerManager.syncWithActiveTask()
-                onClose()
-            }) {
-                HStack(spacing: 6) {
-                    Image(systemName: "trash")
-                        .font(.system(size: 11))
-                    Text("Delete Task")
-                        .font(.system(size: 11, weight: .medium))
-                }
-                .foregroundStyle(Color.red.opacity(0.85))
-                .padding(.vertical, 4)
-            }
-            .buttonStyle(.plain)
         }
-        .frame(width: 200)
-        .padding(.horizontal, 14)
-        .padding(.vertical, 14)
+        .frame(width: 220)
+        .padding(.horizontal, 18)
+        .padding(.vertical, 18)
         .background(Color.primary.opacity(0.02))
     }
 
@@ -674,11 +599,9 @@ public struct TaskModalDialogView: View {
     }
 
     private func updateEstimate(task: TaskItem, mins: Int) {
-        if let index = taskStore.tasks.firstIndex(where: { $0.id == task.id }) {
-            taskStore.tasks[index].estimatedMinutes = mins
-            if taskStore.activeTaskId == task.id {
-                timerManager.syncWithActiveTask()
-            }
+        taskStore.updateTask(id: task.id) { $0.estimatedMinutes = mins }
+        if taskStore.activeTaskId == task.id {
+            timerManager.syncWithActiveTask()
         }
     }
 
@@ -691,16 +614,15 @@ public struct TaskModalDialogView: View {
     }
 
     // MARK: - Native Sheet Outside Click Dismissal
-    private func setupOutsideClickMonitor(for window: NSWindow) {
+    private func setupOutsideClickMonitor() {
         removeOutsideClickMonitor()
-        clickMonitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak window] event in
-            guard let window else { return event }
-            let clickScreenLocation = NSEvent.mouseLocation
-            if !window.frame.contains(clickScreenLocation) {
+        clickMonitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { event in
+            // Outside means the window this sheet is attached to. Clicks in the dialog and
+            // its popovers land on their own windows, so they can never close it.
+            if event.window?.attachedSheet != nil {
                 DispatchQueue.main.async {
                     onClose()
                 }
-                return nil
             }
             return event
         }
@@ -714,19 +636,246 @@ public struct TaskModalDialogView: View {
     }
 }
 
-// MARK: - Native Window Accessor Helper
-private struct WindowAccessor: NSViewRepresentable {
-    let onWindow: (NSWindow) -> Void
+// MARK: - Todoist-Style Minimal Sidebar Attribute Row
+struct SidebarAttributeRow: View {
+    let icon: String
+    let iconColor: Color
+    let text: String
+    let action: () -> Void
+    @State private var isHovered = false
 
-    func makeNSView(context: Context) -> NSView {
-        let view = NSView()
-        DispatchQueue.main.async {
-            if let window = view.window {
-                onWindow(window)
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 8) {
+                Image(systemName: icon)
+                    .font(.system(size: 12))
+                    .foregroundStyle(iconColor)
+
+                Text(text)
+                    .font(.system(size: 13, weight: .regular))
+                    .foregroundStyle(.primary)
+
+                Spacer()
+            }
+            .padding(.vertical, 4)
+            .padding(.horizontal, 6)
+            .background(isHovered ? Color.white.opacity(0.06) : Color.clear)
+            .clipShape(RoundedRectangle(cornerRadius: 6))
+        }
+        .buttonStyle(.plain)
+        .onHover { isHovered = $0 }
+    }
+}
+
+// MARK: - Project Picker Popover
+private struct ProjectPickerPopover: View {
+    let lists: [String]
+    let selectedList: String
+    let colorForList: (String) -> Color
+    let onSelect: (String) -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text("PROJECT")
+                .font(.system(size: 9, weight: .bold))
+                .foregroundStyle(.tertiary)
+                .padding(.horizontal, 8)
+                .padding(.top, 4)
+                .padding(.bottom, 2)
+
+            ForEach(lists, id: \.self) { list in
+                ProjectRow(
+                    list: list,
+                    isSelected: list == selectedList,
+                    color: colorForList(list),
+                    onSelect: { onSelect(list) }
+                )
             }
         }
-        return view
+        .padding(6)
+        .frame(minWidth: 160)
+        .background(Color(nsColor: .windowBackgroundColor))
+        .preferredColorScheme(.dark)
+    }
+}
+
+private struct ProjectRow: View {
+    let list: String
+    let isSelected: Bool
+    let color: Color
+    let onSelect: () -> Void
+    @State private var isHovered = false
+
+    var body: some View {
+        Button(action: onSelect) {
+            HStack(spacing: 8) {
+                Image(systemName: "folder.fill")
+                    .font(.system(size: 11))
+                    .foregroundStyle(color)
+
+                Text(list)
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(.primary)
+
+                Spacer()
+
+                if isSelected {
+                    Image(systemName: "checkmark")
+                        .font(.system(size: 10, weight: .bold))
+                        .foregroundStyle(Color.accentColor)
+                }
+            }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 6)
+            .background(isHovered ? Color.white.opacity(0.08) : Color.clear)
+            .clipShape(RoundedRectangle(cornerRadius: 6))
+        }
+        .buttonStyle(.plain)
+        .onHover { isHovered = $0 }
+    }
+}
+
+// MARK: - Priority Picker Popover
+private struct PriorityPickerPopover: View {
+    let selectedPriority: TaskPriority
+    let onSelect: (TaskPriority) -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text("PRIORITY")
+                .font(.system(size: 9, weight: .bold))
+                .foregroundStyle(.tertiary)
+                .padding(.horizontal, 8)
+                .padding(.top, 4)
+                .padding(.bottom, 2)
+
+            ForEach(TaskPriority.allCases, id: \.self) { p in
+                PriorityRow(
+                    priority: p,
+                    isSelected: p == selectedPriority,
+                    onSelect: { onSelect(p) }
+                )
+            }
+        }
+        .padding(6)
+        .frame(minWidth: 140)
+        .background(Color(nsColor: .windowBackgroundColor))
+        .preferredColorScheme(.dark)
+    }
+}
+
+private struct PriorityRow: View {
+    let priority: TaskPriority
+    let isSelected: Bool
+    let onSelect: () -> Void
+    @State private var isHovered = false
+
+    private var priorityColor: Color {
+        switch priority {
+        case .high: return .red
+        case .medium: return .orange
+        case .low: return .blue
+        }
     }
 
-    func updateNSView(_ nsView: NSView, context: Context) {}
+    var body: some View {
+        Button(action: onSelect) {
+            HStack(spacing: 8) {
+                Image(systemName: "flag.fill")
+                    .font(.system(size: 11))
+                    .foregroundStyle(priorityColor)
+
+                Text(priority.rawValue)
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(.primary)
+
+                Spacer()
+
+                if isSelected {
+                    Image(systemName: "checkmark")
+                        .font(.system(size: 10, weight: .bold))
+                        .foregroundStyle(Color.accentColor)
+                }
+            }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 6)
+            .background(isHovered ? Color.white.opacity(0.08) : Color.clear)
+            .clipShape(RoundedRectangle(cornerRadius: 6))
+        }
+        .buttonStyle(.plain)
+        .onHover { isHovered = $0 }
+    }
+}
+
+// MARK: - Estimate Picker Popover
+private struct EstimatePickerPopover: View {
+    let currentEstimate: Int
+    let onSelect: (Int) -> Void
+
+    let presets = [15, 25, 45, 60, 90]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text("ESTIMATE")
+                .font(.system(size: 9, weight: .bold))
+                .foregroundStyle(.tertiary)
+                .padding(.horizontal, 8)
+                .padding(.top, 4)
+                .padding(.bottom, 2)
+
+            ForEach(presets, id: \.self) { mins in
+                EstimateRow(
+                    minutes: mins,
+                    isSelected: currentEstimate == mins,
+                    onSelect: { onSelect(mins) }
+                )
+            }
+        }
+        .padding(6)
+        .frame(minWidth: 150)
+        .background(Color(nsColor: .windowBackgroundColor))
+        .preferredColorScheme(.dark)
+    }
+}
+
+private struct EstimateRow: View {
+    let minutes: Int
+    let isSelected: Bool
+    let onSelect: () -> Void
+    @State private var isHovered = false
+
+    private var label: String {
+        if minutes == 25 {
+            return "25m (Pomodoro)"
+        }
+        return "\(minutes)m"
+    }
+
+    var body: some View {
+        Button(action: onSelect) {
+            HStack(spacing: 8) {
+                Image(systemName: "timer")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+
+                Text(label)
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(.primary)
+
+                Spacer()
+
+                if isSelected {
+                    Image(systemName: "checkmark")
+                        .font(.system(size: 10, weight: .bold))
+                        .foregroundStyle(Color.accentColor)
+                }
+            }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 6)
+            .background(isHovered ? Color.white.opacity(0.08) : Color.clear)
+            .clipShape(RoundedRectangle(cornerRadius: 6))
+        }
+        .buttonStyle(.plain)
+        .onHover { isHovered = $0 }
+    }
 }

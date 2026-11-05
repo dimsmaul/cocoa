@@ -204,9 +204,7 @@ public struct TaskDetailView: View {
                 TextField("Task Title", text: Binding(
                     get: { task.title },
                     set: { newTitle in
-                        if let index = taskStore.tasks.firstIndex(where: { $0.id == task.id }) {
-                            taskStore.tasks[index].title = newTitle
-                        }
+                        taskStore.updateTask(id: task.id) { $0.title = newTitle }
                     }
                 ))
                 .textFieldStyle(.plain)
@@ -214,7 +212,7 @@ public struct TaskDetailView: View {
                 .padding(.vertical, 4)
             }
 
-            // Task Notes / Description (Native Rich Text via RichTextKit)
+            // Task Notes / Description
             VStack(alignment: .leading, spacing: 4) {
                 Text("NOTES")
                     .font(.system(size: 9, weight: .bold))
@@ -251,9 +249,7 @@ public struct TaskDetailView: View {
                     Picker("", selection: Binding(
                         get: { task.priority },
                         set: { newPriority in
-                            if let index = taskStore.tasks.firstIndex(where: { $0.id == task.id }) {
-                                taskStore.tasks[index].priority = newPriority
-                            }
+                            taskStore.updateTask(id: task.id) { $0.priority = newPriority }
                         }
                     )) {
                         ForEach(TaskPriority.allCases, id: \.self) { p in
@@ -272,9 +268,7 @@ public struct TaskDetailView: View {
                     Picker("", selection: Binding(
                         get: { task.listName },
                         set: { newList in
-                            if let index = taskStore.tasks.firstIndex(where: { $0.id == task.id }) {
-                                taskStore.tasks[index].listName = newList
-                            }
+                            taskStore.updateTask(id: task.id) { $0.listName = newList }
                         }
                     )) {
                         ForEach(taskStore.lists, id: \.self) { l in

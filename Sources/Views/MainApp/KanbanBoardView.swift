@@ -22,6 +22,7 @@ public struct KanbanBoardView: View {
         switch taskStore.selectedSection {
         case .board(let board): return board.rawValue
         case .list(let list): return list
+        case .stats: return "Focus Stats"
         }
     }
 
@@ -29,6 +30,7 @@ public struct KanbanBoardView: View {
         switch taskStore.selectedSection {
         case .board(let board): return board.iconName
         case .list: return "folder.fill"
+        case .stats: return "chart.bar.fill"
         }
     }
 
@@ -36,6 +38,7 @@ public struct KanbanBoardView: View {
         switch taskStore.selectedSection {
         case .board(let board): return boardColor(for: board)
         case .list(let list): return taskStore.colorForList(list)
+        case .stats: return .orange
         }
     }
 
@@ -288,8 +291,8 @@ public struct KanbanBoardView: View {
             }
 
             // Notes preview (if any)
-            if !task.notes.isEmpty {
-                Text(task.notes)
+            if let preview = task.notesPreview {
+                Text(preview)
                     .font(.system(size: 11))
                     .foregroundStyle(.secondary)
                     .lineLimit(2)
@@ -299,6 +302,8 @@ public struct KanbanBoardView: View {
             HStack(spacing: 6) {
                 // List Group Badge with custom folder color
                 listBadge(for: task.listName)
+
+                TaskScheduleBadges(task: task)
 
                 if !task.subtasks.isEmpty {
                     let completed = task.subtasks.filter { $0.isCompleted }.count
@@ -341,6 +346,13 @@ public struct KanbanBoardView: View {
             }
         }
         .padding(10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .contentShape(Rectangle())
+        .onTapGesture {
+            taskStore.selectTask(id: task.id)
+            timerManager.syncWithActiveTask()
+            onOpenDetail(task)
+        }
         .background(
             RoundedRectangle(cornerRadius: 10)
                 .fill(Color.primary.opacity(0.04))
@@ -349,12 +361,6 @@ public struct KanbanBoardView: View {
                         .strokeBorder(Color.white.opacity(0.05), lineWidth: 1)
                 )
         )
-        .contentShape(Rectangle())
-        .onTapGesture {
-            taskStore.selectTask(id: task.id)
-            timerManager.syncWithActiveTask()
-            onOpenDetail(task)
-        }
     }
 
     private func submitQuickTask(to board: TaskBoard) {

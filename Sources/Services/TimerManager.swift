@@ -15,6 +15,7 @@ public final class TimerManager: @unchecked Sendable {
     public var remainingSeconds: Int = 25 * 60
     public var totalSeconds: Int = 25 * 60
     public var isBreak: Bool = false
+    public private(set) var sessionTracker = FocusSessionTracker()
 
     private var timerCancellable: AnyCancellable?
     private weak var taskStore: TaskStore?
@@ -67,6 +68,7 @@ public final class TimerManager: @unchecked Sendable {
         guard state == .running else { return }
         state = .paused
         stopTicker()
+        flushFocusSession()
     }
 
     public func toggle() {
@@ -79,12 +81,21 @@ public final class TimerManager: @unchecked Sendable {
 
     public func reset() {
         stopTicker()
+        flushFocusSession()
         state = .idle
         syncWithActiveTask()
     }
 
+    /// ponytail: a crash loses the running session (task time is still saved); checkpoint it if that matters.
+    public func flushFocusSession() {
+        if let session = sessionTracker.finish() {
+            taskStore?.recordFocusSession(session)
+        }
+    }
+
     public func completeCurrentSession() {
         stopTicker()
+        flushFocusSession()
         state = .completed
 
         if let active = taskStore?.activeTask {
@@ -124,6 +135,11 @@ public final class TimerManager: @unchecked Sendable {
             // Record 1 second progress on the active task
             if let activeId = taskStore?.activeTaskId {
                 taskStore?.recordTimeSpent(id: activeId, seconds: 1)
+
+                let title = taskStore?.tasks.first(where: { $0.id == activeId })?.title ?? ""
+                if let finished = sessionTracker.tick(taskId: activeId, taskTitle: title, now: Date()) {
+                    taskStore?.recordFocusSession(finished)
+                }
             }
         } else {
             // Timer expired!

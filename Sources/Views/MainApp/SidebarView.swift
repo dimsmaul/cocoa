@@ -14,7 +14,7 @@ public struct SidebarView: View {
             List(selection: $taskStore.selectedSection) {
                 // Section: Smart Boards
                 Section("Boards") {
-                    ForEach(TaskBoard.allCases, id: \.self) { board in
+                    ForEach([TaskBoard.inbox, .backlog], id: \.self) { board in
                         NavigationLink(value: SidebarSection.board(board)) {
                             Label {
                                 Text(board.rawValue)
@@ -27,6 +27,18 @@ public struct SidebarView: View {
                             .frame(maxWidth: .infinity, alignment: .leading)
                             .contentShape(Rectangle())
                         }
+                    }
+
+                    NavigationLink(value: SidebarSection.stats) {
+                        Label {
+                            Text("Focus Stats")
+                                .font(.system(size: 13, weight: .medium))
+                        } icon: {
+                            Image(systemName: "chart.bar.fill")
+                                .foregroundStyle(Color.orange)
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .contentShape(Rectangle())
                     }
                 }
                 .collapsible(false)

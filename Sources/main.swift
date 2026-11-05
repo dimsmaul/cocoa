@@ -23,6 +23,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
+    func applicationWillTerminate(_ notification: Notification) {
+        WindowManager.shared.timerManager.flushFocusSession()
+    }
+
     private func setupAppIcon() {
         if let iconURL = Bundle.main.url(forResource: "AppIcon", withExtension: "icns"),
            let iconImage = NSImage(contentsOf: iconURL) {

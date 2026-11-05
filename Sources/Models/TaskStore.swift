@@ -10,6 +10,7 @@ public enum TaskViewMode: String, CaseIterable, Sendable {
 public enum SidebarSection: Hashable, Sendable {
     case board(TaskBoard)
     case list(String)
+    case stats
 }
 
 @Observable
@@ -27,8 +28,12 @@ public final class TaskStore: @unchecked Sendable {
     public var searchQuery: String = ""
     public var viewMode: TaskViewMode = .list
     public var deletedTaskIds: Set<UUID> = []
+    public private(set) var focusSessions: [FocusSession] = []
+    /// Called after every save. Only the app window process sets it, so the `--mcp` process never schedules notifications.
+    public var onTasksSaved: (([TaskItem]) -> Void)? = nil
 
     private let saveURL: URL
+    private let focusLog: FocusSessionLog
     private let hasInitializedKey = "CocoaHasInitializedTasks"
     private var isMergingRemote = false
     private var syncDebounceTask: Task<Void, Never>? = nil
@@ -40,10 +45,12 @@ public final class TaskStore: @unchecked Sendable {
 
         try? fileManager.createDirectory(at: cocoaDir, withIntermediateDirectories: true)
         self.saveURL = cocoaDir.appendingPathComponent("tasks.json")
+        self.focusLog = FocusSessionLog(url: cocoaDir.appendingPathComponent("focus_sessions.jsonl"))
 
         load()
         loadListsMetadata()
         loadDeletedTaskIds()
+        focusSessions = focusLog.load()
 
         let hasInitialized = UserDefaults.standard.bool(forKey: hasInitializedKey)
         let fileExists = fileManager.fileExists(atPath: saveURL.path)
@@ -55,6 +62,8 @@ public final class TaskStore: @unchecked Sendable {
         } else if !hasInitialized {
             UserDefaults.standard.set(true, forKey: hasInitializedKey)
         }
+
+        rollOverDueTasks()
 
         if activeTaskId == nil {
             activeTaskId = tasks.first(where: { !$0.isCompleted })?.id
@@ -99,12 +108,14 @@ public final class TaskStore: @unchecked Sendable {
         switch selectedSection {
         case .board(let board):
             if board == .inbox {
-                base = tasks.filter { !$0.isCompleted }
+                base = tasks.filter(\.isInInbox)
             } else {
                 base = tasks.filter { $0.board == board }
             }
         case .list(let listName):
             base = tasks.filter { $0.listName == listName && !$0.isCompleted }
+        case .stats:
+            base = []
         }
 
         if !searchQuery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
@@ -119,13 +130,17 @@ public final class TaskStore: @unchecked Sendable {
         return tasks.filter { $0.board == .today && !$0.isCompleted }
     }
 
+    public var todayGroupTasks: [TaskItem] {
+        return tasks.filter { $0.isInTodayGroup() }
+    }
+
     public var completedTasks: [TaskItem] {
         return tasks.filter { $0.isCompleted }
     }
 
     public func countForBoard(_ board: TaskBoard) -> Int {
         if board == .inbox {
-            return tasks.filter { !$0.isCompleted }.count
+            return tasks.filter(\.isInInbox).count
         }
         return tasks.filter { $0.board == board }.count
     }
@@ -188,7 +203,61 @@ public final class TaskStore: @unchecked Sendable {
         save()
     }
 
+    /// Adds a task from the global quick capture panel without changing what the main window shows.
+    public func captureTask(title: String) {
+        guard let task = TaskItem.quickCapture(title: title) else { return }
+        tasks.insert(task, at: 0)
+        if activeTaskId == nil {
+            activeTaskId = task.id
+        }
+        save()
+    }
+
+    /// The way for views to edit a task, so the change always reaches disk.
+    public func updateTask(id: UUID, _ change: (inout TaskItem) -> Void) {
+        guard let index = tasks.firstIndex(where: { $0.id == id }) else { return }
+        change(&tasks[index])
+        save()
+    }
+
+    public func setRecurrence(for id: UUID, recurrence: TaskRecurrence?) {
+        guard let index = tasks.firstIndex(where: { $0.id == id }) else { return }
+        tasks[index].recurrence = recurrence
+        save()
+    }
+
+    public func setReminder(for id: UUID, date: Date?) {
+        guard let index = tasks.firstIndex(where: { $0.id == id }) else { return }
+        tasks[index].reminderAt = date
+        save()
+    }
+
+    public func rollOverDueTasks() {
+        if RecurringTasks.rollOverDueTasks(&tasks) {
+            save()
+        }
+    }
+
+    public func recordFocusSession(_ session: FocusSession) {
+        focusSessions.append(session)
+        do {
+            try focusLog.append(session)
+        } catch {
+            print("[TaskStore] Failed to save focus session:", error)
+        }
+    }
+
+    private func undoHandOffIfReopening(id: UUID) {
+        guard tasks.first(where: { $0.id == id })?.isCompleted == true else { return }
+        if let occurrenceId = RecurringTasks.reopen(tasks: &tasks, reopenedId: id) {
+            deleteTask(id: occurrenceId)
+        }
+    }
+
     public func setDueDate(for id: UUID, date: Date?) {
+        if date != nil {
+            undoHandOffIfReopening(id: id)
+        }
         guard let index = tasks.firstIndex(where: { $0.id == id }) else { return }
         tasks[index].dueDate = date
         if let date {
@@ -209,6 +278,7 @@ public final class TaskStore: @unchecked Sendable {
     }
 
     public func toggleCompleted(id: UUID) {
+        undoHandOffIfReopening(id: id)
         guard let index = tasks.firstIndex(where: { $0.id == id }) else { return }
         tasks[index].isCompleted.toggle()
         tasks[index].completedAt = tasks[index].isCompleted ? Date() : nil
@@ -216,6 +286,7 @@ public final class TaskStore: @unchecked Sendable {
 
         if tasks[index].isCompleted {
             SoundManager.shared.playSuccessSound()
+            RecurringTasks.handOff(tasks: &tasks, completedId: id)
         }
 
         if activeTaskId == id && tasks[index].isCompleted {
@@ -225,6 +296,9 @@ public final class TaskStore: @unchecked Sendable {
     }
 
     public func moveTask(id: UUID, to board: TaskBoard) {
+        if board != .done {
+            undoHandOffIfReopening(id: id)
+        }
         guard let index = tasks.firstIndex(where: { $0.id == id }) else { return }
         tasks[index].board = board
         let calendar = Calendar.current
@@ -251,6 +325,7 @@ public final class TaskStore: @unchecked Sendable {
         case .done:
             tasks[index].isCompleted = true
             tasks[index].completedAt = Date()
+            RecurringTasks.handOff(tasks: &tasks, completedId: id)
         }
         save()
     }
@@ -465,7 +540,7 @@ public final class TaskStore: @unchecked Sendable {
             }
         }
         if case .list(let selectedList) = selectedSection, selectedList == name {
-            selectedSection = .board(.today)
+            selectedSection = .board(.inbox)
         }
         saveListsMetadata()
         save()
@@ -540,6 +615,7 @@ public final class TaskStore: @unchecked Sendable {
         } catch {
             print("[TaskStore] Failed to save tasks:", error)
         }
+        onTasksSaved?(tasks)
         scheduleCloudPush()
     }
 

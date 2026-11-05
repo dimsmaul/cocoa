@@ -25,6 +25,7 @@ public struct TaskListView: View {
         switch taskStore.selectedSection {
         case .board(let board): return board.rawValue
         case .list(let list): return list
+        case .stats: return "Focus Stats"
         }
     }
 
@@ -134,15 +135,6 @@ public struct TaskListView: View {
                                 tasks: upcomingGroupTasks
                             )
                         }
-
-                        if !noDateTasks.isEmpty {
-                            inboxGroupView(
-                                title: "No Date",
-                                icon: "tray.fill",
-                                color: .secondary,
-                                tasks: noDateTasks
-                            )
-                        }
                     }
                     .padding(.horizontal, 16)
                     .padding(.vertical, 12)
@@ -190,61 +182,72 @@ public struct TaskListView: View {
             }
             .buttonStyle(.plain)
 
-            // Title & Details
-            VStack(alignment: .leading, spacing: 3) {
-                Text(task.title)
-                    .font(.system(size: 13, weight: .regular))
-                    .strikethrough(task.isCompleted)
-                    .foregroundStyle(task.isCompleted ? Color.secondary : Color.primary)
-                    .lineLimit(1)
+            // Clickable content area that fills the rest of the card
+            HStack(spacing: 12) {
+                // Title & Details
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(task.title)
+                        .font(.system(size: 13, weight: .regular))
+                        .strikethrough(task.isCompleted)
+                        .foregroundStyle(task.isCompleted ? Color.secondary : Color.primary)
+                        .lineLimit(1)
 
-                HStack(spacing: 8) {
-                    if !task.notes.isEmpty {
-                        Text(task.notes)
-                            .font(.system(size: 11))
-                            .foregroundStyle(.secondary)
-                            .lineLimit(1)
-                    }
-
-                    if !task.subtasks.isEmpty {
-                        let completedCount = task.subtasks.filter { $0.isCompleted }.count
-                        HStack(spacing: 3) {
-                            Image(systemName: "checklist")
-                                .font(.system(size: 10))
-                            Text("\(completedCount)/\(task.subtasks.count)")
-                                .font(.system(size: 10, design: .monospaced))
+                    HStack(spacing: 8) {
+                        if let preview = task.notesPreview {
+                            Text(preview)
+                                .font(.system(size: 11))
+                                .foregroundStyle(.secondary)
+                                .lineLimit(1)
                         }
-                        .foregroundStyle(.tertiary)
+
+                        if !task.subtasks.isEmpty {
+                            let completedCount = task.subtasks.filter { $0.isCompleted }.count
+                            HStack(spacing: 3) {
+                                Image(systemName: "checklist")
+                                    .font(.system(size: 10))
+                                Text("\(completedCount)/\(task.subtasks.count)")
+                                    .font(.system(size: 10, design: .monospaced))
+                            }
+                            .foregroundStyle(.tertiary)
+                        }
+
+                        TaskScheduleBadges(task: task)
                     }
                 }
-            }
 
-            Spacer()
+                Spacer(minLength: 8)
 
-            // List Group Badge with custom folder color
-            listBadge(for: task.listName)
+                // List Group Badge with custom folder color
+                listBadge(for: task.listName)
 
-            // Priority Pill
-            Text(task.priority.rawValue)
-                .font(.system(size: 9, weight: .bold))
+                // Priority Pill
+                Text(task.priority.rawValue)
+                    .font(.system(size: 9, weight: .bold))
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .background(priorityColor(task.priority).opacity(0.12))
+                    .foregroundStyle(priorityColor(task.priority))
+                    .clipShape(Capsule())
+
+                // Time estimate badge
+                HStack(spacing: 3) {
+                    Image(systemName: "timer")
+                        .font(.system(size: 10))
+                    Text(task.formattedEstimate)
+                        .font(.system(size: 11, weight: .medium, design: .monospaced))
+                }
+                .foregroundStyle(.secondary)
                 .padding(.horizontal, 6)
-                .padding(.vertical, 2)
-                .background(priorityColor(task.priority).opacity(0.12))
-                .foregroundStyle(priorityColor(task.priority))
-                .clipShape(Capsule())
-
-            // Time estimate badge
-            HStack(spacing: 3) {
-                Image(systemName: "timer")
-                    .font(.system(size: 10))
-                Text(task.formattedEstimate)
-                    .font(.system(size: 11, weight: .medium, design: .monospaced))
+                .padding(.vertical, 3)
+                .background(Color.secondary.opacity(0.1))
+                .clipShape(RoundedRectangle(cornerRadius: 6))
             }
-            .foregroundStyle(.secondary)
-            .padding(.horizontal, 6)
-            .padding(.vertical, 3)
-            .background(Color.secondary.opacity(0.1))
-            .clipShape(RoundedRectangle(cornerRadius: 6))
+            .contentShape(Rectangle())
+            .onTapGesture {
+                taskStore.selectTask(id: task.id)
+                timerManager.syncWithActiveTask()
+                onOpenDetail?(task)
+            }
 
             // Delete button
             Button(action: {
@@ -260,16 +263,11 @@ public struct TaskListView: View {
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 9)
+        .frame(maxWidth: .infinity)
         .background(
             RoundedRectangle(cornerRadius: 10)
                 .fill(Color.primary.opacity(0.03))
         )
-        .contentShape(Rectangle())
-        .onTapGesture {
-            taskStore.selectTask(id: task.id)
-            timerManager.syncWithActiveTask()
-            onOpenDetail?(task)
-        }
     }
 
     private var quickAddBar: some View {
@@ -393,13 +391,7 @@ public struct TaskListView: View {
     }
 
     private var todayGroupTasks: [TaskItem] {
-        return taskStore.filteredTasks.filter { task in
-            if let due = task.dueDate {
-                return Calendar.current.isDateInToday(due) && !task.isCompleted
-            } else {
-                return (task.board == .today || task.board == .inbox) && !task.isCompleted
-            }
-        }
+        return taskStore.filteredTasks.filter { $0.isInTodayGroup() }
     }
 
     private var upcomingGroupTasks: [TaskItem] {
@@ -411,15 +403,6 @@ public struct TaskListView: View {
             } else {
                 return task.board == .upcoming && !task.isCompleted
             }
-        }
-    }
-
-    private var noDateTasks: [TaskItem] {
-        let overdueIds = Set(overdueTasks.map(\.id))
-        let todayIds = Set(todayGroupTasks.map(\.id))
-        let upcomingIds = Set(upcomingGroupTasks.map(\.id))
-        return taskStore.filteredTasks.filter { task in
-            !task.isCompleted && !overdueIds.contains(task.id) && !todayIds.contains(task.id) && !upcomingIds.contains(task.id)
         }
     }
 
