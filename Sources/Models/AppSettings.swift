@@ -93,6 +93,8 @@ public struct AppSettingsPayload: Codable, Sendable {
     public var aiModel: String = ""
     public var aiCustomBaseURL: String = "http://localhost:11434/v1"
     public var aiSystemPrompt: String = "You are Cocoa Focus Assistant. You help organize tasks, break down complex work into clear actionable subtasks, and estimate focus sessions."
+    public var isQuickCaptureEnabled: Bool = true
+    public var quickCaptureShortcut: HotkeyShortcut = .defaultQuickCapture
 
     public init(
         supabaseURL: String = "",
@@ -117,8 +119,12 @@ public struct AppSettingsPayload: Codable, Sendable {
         aiAPIKey: String = "",
         aiModel: String = "",
         aiCustomBaseURL: String = "http://localhost:11434/v1",
-        aiSystemPrompt: String = "You are Cocoa Focus Assistant. You help organize tasks, break down complex work into clear actionable subtasks, and estimate focus sessions."
+        aiSystemPrompt: String = "You are Cocoa Focus Assistant. You help organize tasks, break down complex work into clear actionable subtasks, and estimate focus sessions.",
+        isQuickCaptureEnabled: Bool = true,
+        quickCaptureShortcut: HotkeyShortcut = .defaultQuickCapture
     ) {
+        self.isQuickCaptureEnabled = isQuickCaptureEnabled
+        self.quickCaptureShortcut = quickCaptureShortcut
         self.supabaseURL = supabaseURL
         self.supabaseAnonKey = supabaseAnonKey
         self.isCloudSyncEnabled = isCloudSyncEnabled
@@ -170,6 +176,8 @@ public struct AppSettingsPayload: Codable, Sendable {
         self.aiModel = try container.decodeIfPresent(String.self, forKey: .aiModel) ?? ""
         self.aiCustomBaseURL = try container.decodeIfPresent(String.self, forKey: .aiCustomBaseURL) ?? "http://localhost:11434/v1"
         self.aiSystemPrompt = try container.decodeIfPresent(String.self, forKey: .aiSystemPrompt) ?? "You are Cocoa Focus Assistant. You help organize tasks, break down complex work into clear actionable subtasks, and estimate focus sessions."
+        self.isQuickCaptureEnabled = try container.decodeIfPresent(Bool.self, forKey: .isQuickCaptureEnabled) ?? true
+        self.quickCaptureShortcut = try container.decodeIfPresent(HotkeyShortcut.self, forKey: .quickCaptureShortcut) ?? .defaultQuickCapture
     }
 }
 
@@ -256,6 +264,14 @@ public final class AppSettings: @unchecked Sendable {
         didSet { save() }
     }
     public var aiSystemPrompt: String {
+        didSet { save() }
+    }
+
+    // Quick Capture Settings
+    public var isQuickCaptureEnabled: Bool {
+        didSet { save() }
+    }
+    public var quickCaptureShortcut: HotkeyShortcut {
         didSet { save() }
     }
 
@@ -361,6 +377,9 @@ public final class AppSettings: @unchecked Sendable {
 
         self.aiSystemPrompt = loadedPayload?.aiSystemPrompt ?? (defaults.string(forKey: "ai_system_prompt") ?? "You are Cocoa Focus Assistant. You help organize tasks, break down complex work into clear actionable subtasks, and estimate focus sessions.")
 
+        self.isQuickCaptureEnabled = loadedPayload?.isQuickCaptureEnabled ?? true
+        self.quickCaptureShortcut = loadedPayload?.quickCaptureShortcut ?? .defaultQuickCapture
+
         self.isInitializing = false
         // Persist immediately so settings.json is guaranteed to exist on disk
         self.save()
@@ -393,7 +412,9 @@ public final class AppSettings: @unchecked Sendable {
             aiAPIKey: aiAPIKey,
             aiModel: aiModel,
             aiCustomBaseURL: aiCustomBaseURL,
-            aiSystemPrompt: aiSystemPrompt
+            aiSystemPrompt: aiSystemPrompt,
+            isQuickCaptureEnabled: isQuickCaptureEnabled,
+            quickCaptureShortcut: quickCaptureShortcut
         )
 
         do {
