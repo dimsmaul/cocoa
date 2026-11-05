@@ -12,20 +12,14 @@ permissions:
 jobs:
   build:
     name: Build & Package DMG
-    runs-on: macos-14
+    runs-on: macos-15
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
       - name: Select Xcode Version
         run: |
-          for xcode in /Applications/Xcode_16*.app /Applications/Xcode_15*.app; do
-            if [ -d "$xcode" ]; then
-              echo "Selecting $xcode"
-              sudo xcode-select -s "$xcode"
-              break
-            fi
-          done
+          sudo xcode-select -s /Applications/Xcode_16.4.app
           swift --version
 
       - name: Build and Package Cocoa.app
