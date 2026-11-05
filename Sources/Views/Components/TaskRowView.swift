@@ -3,7 +3,6 @@ import SwiftUI
 public struct TaskRowView: View {
     public let task: TaskItem
     public let isSelected: Bool
-    public var listColor: Color = .orange
     public let onSelect: () -> Void
     public let onToggle: () -> Void
     public let onDelete: () -> Void
@@ -13,14 +12,12 @@ public struct TaskRowView: View {
     public init(
         task: TaskItem,
         isSelected: Bool,
-        listColor: Color = .orange,
         onSelect: @escaping () -> Void,
         onToggle: @escaping () -> Void,
         onDelete: @escaping () -> Void
     ) {
         self.task = task
         self.isSelected = isSelected
-        self.listColor = listColor
         self.onSelect = onSelect
         self.onToggle = onToggle
         self.onDelete = onDelete
@@ -42,8 +39,8 @@ public struct TaskRowView: View {
                     .foregroundStyle(task.isCompleted ? Color.secondary : Color.primary)
                     .lineLimit(1)
 
-                if !task.notes.isEmpty {
-                    Text(task.notes)
+                if let preview = task.notesPreview {
+                    Text(preview)
                         .font(.system(size: 11))
                         .foregroundStyle(.tertiary)
                         .lineLimit(1)
@@ -52,19 +49,7 @@ public struct TaskRowView: View {
 
             Spacer()
 
-            // List Group Badge
-            HStack(spacing: 3) {
-                Circle()
-                    .fill(listColor)
-                    .frame(width: 5, height: 5)
-                Text(task.listName)
-                    .font(.system(size: 9, weight: .semibold))
-            }
-            .foregroundStyle(listColor)
-            .padding(.horizontal, 5)
-            .padding(.vertical, 2)
-            .background(listColor.opacity(0.12))
-            .clipShape(Capsule())
+            TaskScheduleBadges(task: task)
 
             Text(task.formattedEstimate)
                 .font(.system(size: 11, weight: .medium, design: .monospaced))
@@ -89,6 +74,7 @@ public struct TaskRowView: View {
         .background(
             RoundedRectangle(cornerRadius: 8)
                 .fill(isSelected ? Color.primary.opacity(0.08) : (isHovered ? Color.primary.opacity(0.04) : Color.clear))
+                .animation(.easeInOut(duration: 0.2), value: isSelected)
         )
         .contentShape(Rectangle())
         .onTapGesture {
