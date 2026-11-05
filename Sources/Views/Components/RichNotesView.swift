@@ -1,913 +1,714 @@
-import SwiftUI
 import AppKit
-import RichTextKit
+import CoreText
+import SwiftUI
 
-// MARK: - CocoaRichTextView (Subclassing RichTextView from RichTextKit)
-/// A zero-clutter, dark-mode native Rich Text Editor powered by RichTextKit.
-/// Supports both intuitive Markdown triggers and standard Keyboard Shortcuts:
-///
-/// SHORTCUTS:
-/// - Cmd+B: Bold
-/// - Cmd+I: Italic
-/// - Cmd+U: Underline
-/// - Cmd+Shift+X or Cmd+Shift+S: Strikethrough
-/// - Cmd+Shift+L, Cmd+L, Cmd+Shift+8, Cmd+8: Bullet List (•)
-/// - Cmd+Shift+7, Cmd+7: Numbered List (1., 2., ...)
-/// - Cmd+Shift+., Cmd+Shift+9, Cmd+', Cmd+Shift+Q: Blockquote (▎)
-/// - Cmd+Shift+C, Cmd+E, Cmd+Shift+K: Monospace Code (chip / block)
-///
-/// MARKDOWN AUTO-FORMATTING ON TYPE:
-/// - Type "- " or "* " at start of line -> Auto bullet list (• )
-/// - Type "1. " at start of line -> Auto numbered list (1. )
-/// - Type "> " at start of line -> Auto quote block (▎ )
-/// - Type "`code` " -> Auto inline code chip
-/// - Press Enter in list/quote -> Automatically continues to next item
-/// - Press Enter on empty list/quote item -> Exits list/quote mode
-/// - Press Backspace right after bullet/quote/number -> Deletes prefix in 1 keypress
+// The editor keeps plain Markdown in its text storage and only changes how it looks, so what
+// you type, what is saved, and what an agent reads or writes are the same string.
+
+private extension NSAttributedString.Key {
+    static let markdownHidden = NSAttributedString.Key("cocoa.markdownHidden")
+    static let markdownBullet = NSAttributedString.Key("cocoa.markdownBullet")
+    static let markdownBlock = NSAttributedString.Key("cocoa.markdownBlock")
+    static let markdownTaskBox = NSAttributedString.Key("cocoa.markdownTaskBox")
+}
+
+private enum MarkdownBlock: String {
+    case code, quote, rule
+}
+
+private enum MarkdownTheme {
+    static let text = NSColor.white
+    static let secondary = NSColor.white.withAlphaComponent(0.62)
+    static let dimmed = NSColor.white.withAlphaComponent(0.35)
+    static let accent = NSColor.systemOrange
+    static let code = NSColor(red: 1.0, green: 0.86, blue: 0.52, alpha: 1.0)
+    static let codeBackground = NSColor.white.withAlphaComponent(0.12)
+    static let blockBackground = NSColor.white.withAlphaComponent(0.06)
+    static let link = NSColor(red: 0.45, green: 0.72, blue: 1.0, alpha: 1.0)
+    static let done = NSColor.systemGreen
+}
+
+// MARK: - Styling
+
 @MainActor
-public final class CocoaRichTextView: RichTextView {
-    public var baseFontSize: CGFloat = 14
-    public var onContentChange: ((NSAttributedString) -> Void)?
+enum MarkdownStyler {
+    static func baseAttributes(fontSize: CGFloat) -> [NSAttributedString.Key: Any] {
+        [
+            .font: NSFont.systemFont(ofSize: fontSize),
+            .foregroundColor: MarkdownTheme.text,
+            .paragraphStyle: paragraph()
+        ]
+    }
 
-    private let codeBgColor = NSColor.white.withAlphaComponent(0.12)
-    private let codeFgColor = NSColor(red: 1.0, green: 0.86, blue: 0.52, alpha: 1.0) // Warm amber code color
-    private let quoteFgColor = NSColor(white: 0.88, alpha: 1.0)
+    /// ponytail: restyles the whole note on each change, fine for notes of a few pages; style only the edited lines if long notes lag.
+    static func apply(to storage: NSTextStorage, fontSize: CGFloat, revealedLine: NSRange?) {
+        let full = NSRange(location: 0, length: storage.length)
+        let spans = MarkdownParser.spans(in: storage.string)
 
-    // Enforce white or code color for newly typed characters
-    override public var typingAttributes: [NSAttributedString.Key : Any] {
-        get {
-            var attrs = super.typingAttributes
-            if attrs[.foregroundColor] == nil {
-                attrs[.foregroundColor] = NSColor.white
-            }
-            if attrs[.font] == nil {
-                attrs[.font] = NSFont.systemFont(ofSize: baseFontSize)
-            }
-            return attrs
-        }
-        set {
-            var attrs = newValue
-            if attrs[.foregroundColor] == nil {
-                attrs[.foregroundColor] = NSColor.white
-            }
-            if attrs[.font] == nil {
-                attrs[.font] = NSFont.systemFont(ofSize: baseFontSize)
-            }
-            super.typingAttributes = attrs
+        storage.beginEditing()
+        storage.setAttributes(baseAttributes(fontSize: fontSize), range: full)
+        spans.forEach { applyBlock($0, to: storage, fontSize: fontSize, revealedLine: revealedLine) }
+        spans.forEach { applyInline($0, to: storage, fontSize: fontSize, revealedLine: revealedLine) }
+        storage.endEditing()
+
+        // Hidden characters are decided when glyphs are generated, which attribute changes do not redo.
+        storage.layoutManagers.forEach {
+            $0.invalidateGlyphs(forCharacterRange: full, changeInLength: 0, actualCharacterRange: nil)
         }
     }
 
-    // MARK: - Keyboard Shortcuts Responder
-    override public func performKeyEquivalent(with event: NSEvent) -> Bool {
-        let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
-        let chars = event.charactersIgnoringModifiers?.lowercased() ?? ""
-
-        // 1. Bold: Cmd + B
-        if flags == .command && chars == "b" {
-            toggleRichTextStyle(.bold)
-            ensureTypingColorIsWhite()
-            notifyContentChanged()
-            return true
-        }
-
-        // 2. Italic: Cmd + I
-        if flags == .command && chars == "i" {
-            toggleRichTextStyle(.italic)
-            ensureTypingColorIsWhite()
-            notifyContentChanged()
-            return true
-        }
-
-        // 3. Underline: Cmd + U
-        if flags == .command && chars == "u" {
-            toggleRichTextStyle(.underlined)
-            ensureTypingColorIsWhite()
-            notifyContentChanged()
-            return true
-        }
-
-        // 4. Strikethrough: Cmd + Shift + X or Cmd + Shift + S
-        if flags == [.command, .shift] && (chars == "x" || chars == "s") {
-            toggleRichTextStyle(.strikethrough)
-            ensureTypingColorIsWhite()
-            notifyContentChanged()
-            return true
-        }
-
-        // 5. Bullet List: Cmd + Shift + L, Cmd + L, Cmd + Shift + 8, Cmd + 8
-        if ((flags == [.command, .shift] || flags == .command) && chars == "l") ||
-           ((flags == [.command, .shift] || flags == .command) && (chars == "8" || chars == "*")) {
-            toggleBulletList()
-            return true
-        }
-
-        // 6. Numbered List: Cmd + Shift + 7, Cmd + 7
-        if (flags == [.command, .shift] || flags == .command) && chars == "7" {
-            toggleNumberedList()
-            return true
-        }
-
-        // 7. Quote Block: Cmd + Shift + . (Cmd+>), Cmd + Shift + 9, Cmd + ', Cmd + Shift + Q
-        if (flags == [.command, .shift] && (chars == "." || chars == ">" || chars == "q" || chars == "9")) ||
-           (flags == .command && chars == "'") {
-            toggleQuoteBlock()
-            return true
-        }
-
-        // 8. Code (Inline / Block): Cmd + Shift + C, Cmd + E, Cmd + Shift + K
-        if (flags == [.command, .shift] && (chars == "c" || chars == "k")) ||
-           (flags == .command && chars == "e") {
-            toggleCodeFormatting()
-            return true
-        }
-
-        return super.performKeyEquivalent(with: event)
+    private static func paragraph(
+        indent: CGFloat = 0,
+        headIndent: CGFloat? = nil,
+        before: CGFloat = 0,
+        after: CGFloat = 3,
+        lineSpacing: CGFloat = 2
+    ) -> NSParagraphStyle {
+        let style = NSMutableParagraphStyle()
+        style.firstLineHeadIndent = indent
+        style.headIndent = headIndent ?? indent
+        style.paragraphSpacingBefore = before
+        style.paragraphSpacing = after
+        style.lineSpacing = lineSpacing
+        return style
     }
 
-    // MARK: - Text Input & Markdown Interception
-    override public func insertText(_ string: Any, replacementRange: NSRange) {
-        if let str = string as? String, str == " " {
-            let range = selectedRange()
-            if range.length == 0, let text = textStorage?.string as? NSString {
-                let lineRange = text.lineRange(for: range)
-                let linePrefix = text.substring(with: NSRange(location: lineRange.location, length: range.location - lineRange.location))
-
-                // Markdown "- " or "* " -> Bullet list
-                if linePrefix == "-" || linePrefix == "*" {
-                    let replaceRange = NSRange(location: lineRange.location, length: 1)
-                    if shouldChangeText(in: replaceRange, replacementString: "• ") {
-                        replaceCharacters(in: replaceRange, with: "• ")
-                        didChangeText()
-                        setSelectedRange(NSRange(location: lineRange.location + 2, length: 0))
-                        ensureTypingColorIsWhite()
-                        notifyContentChanged()
-                        return
-                    }
-                }
-
-                // Markdown ">" -> Blockquote "▎ "
-                if linePrefix == ">" {
-                    let replaceRange = NSRange(location: lineRange.location, length: 1)
-                    if shouldChangeText(in: replaceRange, replacementString: "▎ ") {
-                        replaceCharacters(in: replaceRange, with: "▎ ")
-                        didChangeText()
-                        setSelectedRange(NSRange(location: lineRange.location + 2, length: 0))
-
-                        let italicFont = NSFontManager.shared.convert(NSFont.systemFont(ofSize: baseFontSize), toHaveTrait: .italicFontMask)
-                        var attrs = typingAttributes
-                        attrs[.font] = italicFont
-                        attrs[.foregroundColor] = quoteFgColor
-                        typingAttributes = attrs
-
-                        notifyContentChanged()
-                        return
-                    }
-                }
-
-                // Markdown inline code: `code` followed by Space
-                if let lastTick = linePrefix.dropLast().lastIndex(of: "`"),
-                   linePrefix.hasSuffix("`"),
-                   lastTick < linePrefix.index(before: linePrefix.endIndex) {
-                    let codeStartDist = linePrefix.distance(from: linePrefix.startIndex, to: lastTick)
-                    let codeText = String(linePrefix[linePrefix.index(after: lastTick)..<linePrefix.index(before: linePrefix.endIndex)])
-                    if !codeText.isEmpty && !codeText.contains(" ") {
-                        let replaceRange = NSRange(location: lineRange.location + codeStartDist, length: codeText.count + 2)
-                        let monoFont = NSFont.monospacedSystemFont(ofSize: baseFontSize - 0.5, weight: .medium)
-                        let attrCode = NSAttributedString(string: codeText + " ", attributes: [
-                            .font: monoFont,
-                            .foregroundColor: codeFgColor,
-                            .backgroundColor: codeBgColor
-                        ])
-                        if shouldChangeText(in: replaceRange, replacementString: codeText + " ") {
-                            textStorage?.replaceCharacters(in: replaceRange, with: attrCode)
-                            didChangeText()
-                            setSelectedRange(NSRange(location: replaceRange.location + codeText.count + 1, length: 0))
-
-                            var attrs = typingAttributes
-                            attrs.removeValue(forKey: .backgroundColor)
-                            attrs[.font] = NSFont.systemFont(ofSize: baseFontSize)
-                            attrs[.foregroundColor] = NSColor.white
-                            typingAttributes = attrs
-
-                            notifyContentChanged()
-                            return
-                        }
-                    }
-                }
-            }
-        }
-
-        super.insertText(string, replacementRange: replacementRange)
+    private static func isRevealed(_ range: NSRange, _ revealedLine: NSRange?) -> Bool {
+        guard let revealedLine else { return false }
+        return NSLocationInRange(range.location, revealedLine)
+            || (range.location == NSMaxRange(revealedLine) && revealedLine.length == 0)
     }
 
-    // MARK: - Enter Key Interception (Auto-continue or Exit List/Quote)
-    override public func insertNewline(_ sender: Any?) {
-        let range = selectedRange()
-        guard let text = textStorage?.string as? NSString else {
-            super.insertNewline(sender)
-            return
-        }
-        let lineRange = text.lineRange(for: NSRange(location: range.location, length: 0))
-        let lineText = text.substring(with: lineRange)
-        let trimmed = lineText.trimmingCharacters(in: .whitespacesAndNewlines)
-
-        // 1. Bullet list
-        if trimmed == "•" {
-            // Empty bullet line -> Exit bullet list
-            let replaceRange = NSRange(location: lineRange.location, length: lineText.count)
-            if shouldChangeText(in: replaceRange, replacementString: "") {
-                replaceCharacters(in: replaceRange, with: "")
-                didChangeText()
-                ensureTypingColorIsWhite()
-                notifyContentChanged()
-                return
-            }
-        } else if lineText.hasPrefix("• ") {
-            // Continue bullet list
-            let nextBullet = "\n• "
-            if shouldChangeText(in: range, replacementString: nextBullet) {
-                replaceCharacters(in: range, with: nextBullet)
-                didChangeText()
-                setSelectedRange(NSRange(location: range.location + nextBullet.count, length: 0))
-                ensureTypingColorIsWhite()
-                notifyContentChanged()
-                return
-            }
-        }
-
-        // 2. Numbered list
-        if trimmed.range(of: #"^\d+\.$"#, options: .regularExpression) != nil {
-            // Empty numbered line -> Exit numbered list
-            let replaceRange = NSRange(location: lineRange.location, length: lineText.count)
-            if shouldChangeText(in: replaceRange, replacementString: "") {
-                replaceCharacters(in: replaceRange, with: "")
-                didChangeText()
-                ensureTypingColorIsWhite()
-                notifyContentChanged()
-                return
-            }
-        } else if let numRange = trimmed.range(of: #"^(\d+)\.\s+"#, options: .regularExpression) {
-            let numStr = String(trimmed[numRange]).trimmingCharacters(in: .whitespaces).dropLast()
-            if let currentNum = Int(numStr) {
-                let nextNumStr = "\n\(currentNum + 1). "
-                if shouldChangeText(in: range, replacementString: nextNumStr) {
-                    replaceCharacters(in: range, with: nextNumStr)
-                    didChangeText()
-                    setSelectedRange(NSRange(location: range.location + nextNumStr.count, length: 0))
-                    ensureTypingColorIsWhite()
-                    notifyContentChanged()
-                    return
-                }
-            }
-        }
-
-        // 3. Blockquote
-        if trimmed == "▎" {
-            // Empty quote line -> Exit quote
-            let replaceRange = NSRange(location: lineRange.location, length: lineText.count)
-            if shouldChangeText(in: replaceRange, replacementString: "") {
-                replaceCharacters(in: replaceRange, with: "")
-                didChangeText()
-                ensureTypingColorIsWhite()
-                notifyContentChanged()
-                return
-            }
-        } else if lineText.hasPrefix("▎ ") {
-            let nextQuote = "\n▎ "
-            if shouldChangeText(in: range, replacementString: nextQuote) {
-                replaceCharacters(in: range, with: nextQuote)
-                didChangeText()
-                setSelectedRange(NSRange(location: range.location + nextQuote.count, length: 0))
-                ensureTypingColorIsWhite()
-                notifyContentChanged()
-                return
-            }
-        }
-
-        // Standard newline
-        super.insertNewline(sender)
-
-        var attrs = typingAttributes
-        attrs.removeValue(forKey: .backgroundColor)
-        attrs[.font] = NSFont.systemFont(ofSize: baseFontSize)
-        attrs[.foregroundColor] = NSColor.white
-        typingAttributes = attrs
-
-        notifyContentChanged()
+    private static func monoFont(_ size: CGFloat, weight: NSFont.Weight = .regular) -> NSFont {
+        NSFont.monospacedSystemFont(ofSize: size, weight: weight)
     }
 
-    // MARK: - Backspace Key Interception (One-touch delete of prefix)
-    override public func deleteBackward(_ sender: Any?) {
-        let range = selectedRange()
-        if range.length == 0, let text = textStorage?.string as? NSString {
-            let lineRange = text.lineRange(for: range)
-            let lineText = text.substring(with: NSRange(location: lineRange.location, length: range.location - lineRange.location))
-
-            if lineText == "• " || lineText == "▎ " {
-                let deleteRange = NSRange(location: lineRange.location, length: 2)
-                if shouldChangeText(in: deleteRange, replacementString: "") {
-                    replaceCharacters(in: deleteRange, with: "")
-                    didChangeText()
-                    setSelectedRange(NSRange(location: lineRange.location, length: 0))
-                    ensureTypingColorIsWhite()
-                    notifyContentChanged()
-                    return
-                }
-            }
-
-            if let match = lineText.range(of: #"^\d+\.\s$"#, options: .regularExpression) {
-                let matchLen = lineText.distance(from: match.lowerBound, to: match.upperBound)
-                let deleteRange = NSRange(location: lineRange.location, length: matchLen)
-                if shouldChangeText(in: deleteRange, replacementString: "") {
-                    replaceCharacters(in: deleteRange, with: "")
-                    didChangeText()
-                    setSelectedRange(NSRange(location: lineRange.location, length: 0))
-                    ensureTypingColorIsWhite()
-                    notifyContentChanged()
-                    return
-                }
-            }
-        }
-
-        super.deleteBackward(sender)
-        notifyContentChanged()
+    private static func characterWidth(of font: NSFont) -> CGFloat {
+        ("0" as NSString).size(withAttributes: [.font: font]).width
     }
 
-    // MARK: - Rich Feature Toggles
+    private static func applyBlock(_ span: MarkdownSpan, to storage: NSTextStorage, fontSize: CGFloat, revealedLine: NSRange?) {
+        let range = span.range
+        let mono = monoFont(fontSize - 0.5)
 
-    /// Toggles Bullet List (•) on the current line or selection
-    public func toggleBulletList() {
-        let range = selectedRange()
-        guard let text = textStorage?.string as? NSString else { return }
-        let lineRange = text.lineRange(for: range)
-        let fullLine = text.substring(with: lineRange)
+        switch span.kind {
+        case .heading(let level):
+            let increase: [CGFloat] = [9, 6, 3, 1, 0, 0]
+            storage.addAttribute(.font, value: NSFont.systemFont(ofSize: fontSize + increase[min(level, 6) - 1], weight: .bold), range: range)
+            storage.addAttribute(.paragraphStyle, value: paragraph(before: 6, after: 4), range: range)
 
-        let lines = fullLine.components(separatedBy: "\n")
-        var newLines: [String] = []
+        case .listItem(let indent):
+            storage.addAttribute(.paragraphStyle, value: paragraph(headIndent: CGFloat(indent) * characterWidth(of: mono)), range: range)
 
-        let allHaveBullet = lines.filter { !$0.trimmingCharacters(in: .whitespaces).isEmpty }
-            .allSatisfy { $0.trimmingCharacters(in: .whitespaces).hasPrefix("• ") }
+        case .quote:
+            storage.addAttribute(.foregroundColor, value: MarkdownTheme.secondary, range: range)
+            storage.addAttribute(.paragraphStyle, value: paragraph(indent: 12), range: range)
+            storage.addAttribute(.markdownBlock, value: MarkdownBlock.quote.rawValue, range: range)
 
-        for line in lines {
-            if line.isEmpty && lines.count > 1 {
-                newLines.append(line)
-                continue
-            }
-            let trimmed = line.trimmingCharacters(in: .whitespaces)
-            if allHaveBullet {
-                if trimmed.hasPrefix("• ") {
-                    newLines.append(String(trimmed.dropFirst(2)))
-                } else {
-                    newLines.append(line)
-                }
+        case .codeBlock, .codeFence:
+            let isFence = span.kind == .codeFence
+            storage.addAttribute(.font, value: mono, range: range)
+            storage.addAttribute(.foregroundColor, value: isFence ? MarkdownTheme.dimmed : MarkdownTheme.code, range: range)
+            storage.addAttribute(.paragraphStyle, value: paragraph(indent: 8, after: 0, lineSpacing: 1), range: range)
+            storage.addAttribute(.markdownBlock, value: MarkdownBlock.code.rawValue, range: range)
+
+        case .tableRow(let isHeader):
+            storage.addAttribute(.font, value: monoFont(fontSize - 0.5, weight: isHeader ? .bold : .regular), range: range)
+
+        case .tableDivider:
+            if isRevealed(range, revealedLine) {
+                storage.addAttribute(.font, value: mono, range: range)
+                storage.addAttribute(.foregroundColor, value: MarkdownTheme.dimmed, range: range)
             } else {
-                var clean = trimmed
-                if clean.hasPrefix("▎ ") { clean = String(clean.dropFirst(2)) }
-                if let numMatch = clean.range(of: #"^\d+\.\s*"#, options: .regularExpression) {
-                    clean.removeSubrange(numMatch)
-                }
-                newLines.append("• " + clean)
+                // Collapsed to a thin gap under the header.
+                storage.addAttribute(.font, value: NSFont.systemFont(ofSize: 2), range: range)
+                storage.addAttribute(.markdownHidden, value: true, range: range)
+                storage.addAttribute(.paragraphStyle, value: paragraph(after: 0, lineSpacing: 0), range: range)
             }
-        }
 
-        let replacement = newLines.joined(separator: "\n")
-        if shouldChangeText(in: lineRange, replacementString: replacement) {
-            replaceCharacters(in: lineRange, with: replacement)
-            didChangeText()
-            setSelectedRange(NSRange(location: lineRange.location + replacement.count, length: 0))
-            ensureTypingColorIsWhite()
-            notifyContentChanged()
-        }
-    }
-
-    /// Toggles Numbered List (1., 2., ...) on current line or selection
-    public func toggleNumberedList() {
-        let range = selectedRange()
-        guard let text = textStorage?.string as? NSString else { return }
-        let lineRange = text.lineRange(for: range)
-        let fullLine = text.substring(with: lineRange)
-
-        let lines = fullLine.components(separatedBy: "\n")
-        var newLines: [String] = []
-        var counter = 1
-
-        let allHaveNumber = lines.filter { !$0.trimmingCharacters(in: .whitespaces).isEmpty }
-            .allSatisfy { $0.trimmingCharacters(in: .whitespaces).range(of: #"^\d+\.\s*"#, options: .regularExpression) != nil }
-
-        for line in lines {
-            if line.isEmpty && lines.count > 1 {
-                newLines.append(line)
-                continue
-            }
-            let trimmed = line.trimmingCharacters(in: .whitespaces)
-            if allHaveNumber {
-                if let match = trimmed.range(of: #"^\d+\.\s*"#, options: .regularExpression) {
-                    var clean = trimmed
-                    clean.removeSubrange(match)
-                    newLines.append(clean)
-                } else {
-                    newLines.append(line)
-                }
+        case .horizontalRule:
+            storage.addAttribute(.markdownBlock, value: MarkdownBlock.rule.rawValue, range: range)
+            if isRevealed(range, revealedLine) {
+                storage.addAttribute(.foregroundColor, value: MarkdownTheme.dimmed, range: range)
             } else {
-                var clean = trimmed
-                if clean.hasPrefix("• ") { clean = String(clean.dropFirst(2)) }
-                if clean.hasPrefix("▎ ") { clean = String(clean.dropFirst(2)) }
-                if let match = clean.range(of: #"^\d+\.\s*"#, options: .regularExpression) {
-                    clean.removeSubrange(match)
-                }
-                newLines.append("\(counter). " + clean)
-                counter += 1
+                storage.addAttribute(.markdownHidden, value: true, range: range)
             }
-        }
 
-        let replacement = newLines.joined(separator: "\n")
-        if shouldChangeText(in: lineRange, replacementString: replacement) {
-            replaceCharacters(in: lineRange, with: replacement)
-            didChangeText()
-            setSelectedRange(NSRange(location: lineRange.location + replacement.count, length: 0))
-            ensureTypingColorIsWhite()
-            notifyContentChanged()
+        default:
+            break
         }
     }
 
-    /// Toggles Blockquote (▎) on current line or selection
-    public func toggleQuoteBlock() {
-        let range = selectedRange()
-        guard let text = textStorage?.string as? NSString else { return }
-        let lineRange = text.lineRange(for: range)
-        let fullLine = text.substring(with: lineRange)
+    private static func applyInline(_ span: MarkdownSpan, to storage: NSTextStorage, fontSize: CGFloat, revealedLine: NSRange?) {
+        let range = span.range
 
-        let lines = fullLine.components(separatedBy: "\n")
-        var newLines: [String] = []
+        switch span.kind {
+        case .bold:
+            applyTrait(.boldFontMask, to: storage, range: range)
 
-        let allHaveQuote = lines.filter { !$0.trimmingCharacters(in: .whitespaces).isEmpty }
-            .allSatisfy { $0.trimmingCharacters(in: .whitespaces).hasPrefix("▎ ") }
+        case .italic:
+            applyTrait(.italicFontMask, to: storage, range: range)
 
-        for line in lines {
-            if line.isEmpty && lines.count > 1 {
-                newLines.append(line)
-                continue
+        case .strikethrough:
+            storage.addAttribute(.strikethroughStyle, value: NSUnderlineStyle.single.rawValue, range: range)
+
+        case .inlineCode:
+            let current = storage.attribute(.font, at: range.location, effectiveRange: nil) as? NSFont
+            // Text that is already monospaced, like a table cell, keeps its size so columns stay aligned.
+            let size = current.map { $0.isFixedPitch ? $0.pointSize : $0.pointSize - 0.5 } ?? fontSize - 0.5
+            storage.addAttribute(.font, value: monoFont(size, weight: .medium), range: range)
+            storage.addAttribute(.foregroundColor, value: MarkdownTheme.code, range: range)
+            storage.addAttribute(.backgroundColor, value: MarkdownTheme.codeBackground, range: range)
+
+        case .link(let address):
+            if let url = URL(string: address) {
+                storage.addAttribute(.link, value: url, range: range)
             }
-            let trimmed = line.trimmingCharacters(in: .whitespaces)
-            if allHaveQuote {
-                if trimmed.hasPrefix("▎ ") {
-                    newLines.append(String(trimmed.dropFirst(2)))
-                } else {
-                    newLines.append(line)
-                }
+            storage.addAttribute(.foregroundColor, value: MarkdownTheme.link, range: range)
+
+        case .marker:
+            if isRevealed(range, revealedLine) {
+                storage.addAttribute(.foregroundColor, value: MarkdownTheme.dimmed, range: range)
             } else {
-                var clean = trimmed
-                if clean.hasPrefix("• ") { clean = String(clean.dropFirst(2)) }
-                if let match = clean.range(of: #"^\d+\.\s*"#, options: .regularExpression) {
-                    clean.removeSubrange(match)
-                }
-                newLines.append("▎ " + clean)
-            }
-        }
-
-        let replacement = newLines.joined(separator: "\n")
-        if shouldChangeText(in: lineRange, replacementString: replacement) {
-            replaceCharacters(in: lineRange, with: replacement)
-            didChangeText()
-
-            let updatedRange = NSRange(location: lineRange.location, length: replacement.count)
-            if !allHaveQuote {
-                let italicFont = NSFontManager.shared.convert(NSFont.systemFont(ofSize: baseFontSize), toHaveTrait: .italicFontMask)
-                textStorage?.addAttribute(.font, value: italicFont, range: updatedRange)
-                textStorage?.addAttribute(.foregroundColor, value: quoteFgColor, range: updatedRange)
-            } else {
-                textStorage?.addAttribute(.font, value: NSFont.systemFont(ofSize: baseFontSize), range: updatedRange)
-                textStorage?.addAttribute(.foregroundColor, value: NSColor.white, range: updatedRange)
+                // Tiny rather than a null glyph: a null glyph at the start of a line stops it
+                // counting as a paragraph start, which breaks indents and block backgrounds.
+                storage.addAttribute(.font, value: NSFont.systemFont(ofSize: 0.01), range: range)
+                storage.addAttribute(.foregroundColor, value: NSColor.clear, range: range)
             }
 
-            setSelectedRange(NSRange(location: lineRange.location + replacement.count, length: 0))
-            ensureTypingColorIsWhite()
-            notifyContentChanged()
-        }
-    }
+        case .listMarker:
+            storage.addAttribute(.markdownBullet, value: true, range: range)
+            storage.addAttribute(.foregroundColor, value: MarkdownTheme.accent, range: range)
 
-    /// Toggles Monospaced Code formatting (amber text on subtle rounded background)
-    public func toggleCodeFormatting() {
-        let range = selectedRange()
-        let monoFont = NSFont.monospacedSystemFont(ofSize: baseFontSize - 0.5, weight: .medium)
+        case .orderedMarker:
+            storage.addAttribute(.foregroundColor, value: MarkdownTheme.accent, range: range)
 
-        if range.length > 0 {
-            guard let storage = textStorage else { return }
+        case .taskBox(let isChecked):
+            storage.addAttribute(.font, value: monoFont(fontSize - 0.5, weight: .bold), range: range)
+            storage.addAttribute(.foregroundColor, value: isChecked ? MarkdownTheme.done : MarkdownTheme.accent, range: range)
+            storage.addAttribute(.markdownTaskBox, value: true, range: range)
 
-            var isCode = false
-            storage.enumerateAttribute(.font, in: range) { val, _, stop in
-                if let font = val as? NSFont, self.isMonoFont(font) {
-                    isCode = true
-                    stop.pointee = true
-                }
-            }
+        case .completedTask:
+            storage.addAttribute(.foregroundColor, value: MarkdownTheme.secondary, range: range)
+            storage.addAttribute(.strikethroughStyle, value: NSUnderlineStyle.single.rawValue, range: range)
 
-            if isCode {
-                storage.removeAttribute(.backgroundColor, range: range)
-                storage.addAttribute(.font, value: NSFont.systemFont(ofSize: baseFontSize), range: range)
-                storage.addAttribute(.foregroundColor, value: NSColor.white, range: range)
-            } else {
-                storage.addAttribute(.backgroundColor, value: codeBgColor, range: range)
-                storage.addAttribute(.font, value: monoFont, range: range)
-                storage.addAttribute(.foregroundColor, value: codeFgColor, range: range)
-            }
-            didChangeText()
-            notifyContentChanged()
-        } else {
-            var attrs = typingAttributes
-            if let currentFont = attrs[.font] as? NSFont, isMonoFont(currentFont) {
-                attrs.removeValue(forKey: .backgroundColor)
-                attrs[.font] = NSFont.systemFont(ofSize: baseFontSize)
-                attrs[.foregroundColor] = NSColor.white
-            } else {
-                attrs[.backgroundColor] = codeBgColor
-                attrs[.font] = monoFont
-                attrs[.foregroundColor] = codeFgColor
-            }
-            typingAttributes = attrs
+        case .tablePipe:
+            storage.addAttribute(.foregroundColor, value: MarkdownTheme.dimmed, range: range)
+
+        case .tablePadding(let columns):
+            let mono = monoFont(fontSize - 0.5)
+            storage.addAttribute(.kern, value: CGFloat(columns) * characterWidth(of: mono), range: range)
+
+        default:
+            break
         }
     }
 
-    private func isMonoFont(_ font: NSFont) -> Bool {
-        let name = font.fontName.lowercased()
-        return font.isFixedPitch || name.contains("mono") || name.contains("menlo") || name.contains("courier")
-    }
-
-    public func ensureTypingColorIsWhite() {
-        var attrs = typingAttributes
-        if attrs[.backgroundColor] == nil {
-            attrs[.foregroundColor] = NSColor.white
-        }
-        typingAttributes = attrs
-    }
-
-    public func notifyContentChanged() {
-        if let storage = textStorage {
-            onContentChange?(storage)
+    private static func applyTrait(_ trait: NSFontTraitMask, to storage: NSTextStorage, range: NSRange) {
+        storage.enumerateAttribute(.font, in: range) { value, subrange, _ in
+            guard let font = value as? NSFont else { return }
+            storage.addAttribute(.font, value: NSFontManager.shared.convert(font, toHaveTrait: trait), range: subrange)
         }
     }
 }
 
-// MARK: - NativeRichTextEditor (SwiftUI Representable)
+// MARK: - Layout: hidden syntax, bullets, and full-width block backgrounds
+
+private final class MarkdownLayoutManager: NSLayoutManager, NSLayoutManagerDelegate {
+    override init() {
+        super.init()
+        delegate = self
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) is not used")
+    }
+
+    func layoutManager(
+        _ layoutManager: NSLayoutManager,
+        shouldGenerateGlyphs glyphs: UnsafePointer<CGGlyph>,
+        properties: UnsafePointer<NSLayoutManager.GlyphProperty>,
+        characterIndexes: UnsafePointer<Int>,
+        font: NSFont,
+        forGlyphRange glyphRange: NSRange
+    ) -> Int {
+        guard let storage = textStorage else { return 0 }
+
+        var newGlyphs = Array(UnsafeBufferPointer(start: glyphs, count: glyphRange.length))
+        var newProperties = Array(UnsafeBufferPointer(start: properties, count: glyphRange.length))
+        var isChanged = false
+
+        for index in 0..<glyphRange.length {
+            let character = characterIndexes[index]
+            guard character < storage.length else { continue }
+            if storage.attribute(.markdownHidden, at: character, effectiveRange: nil) != nil {
+                newProperties[index] = .null
+                isChanged = true
+            } else if storage.attribute(.markdownBullet, at: character, effectiveRange: nil) != nil {
+                var bullet: UniChar = 0x2022
+                var glyph: CGGlyph = 0
+                if CTFontGetGlyphsForCharacters(font as CTFont, &bullet, &glyph, 1) {
+                    newGlyphs[index] = glyph
+                    isChanged = true
+                }
+            }
+        }
+
+        guard isChanged else { return 0 }
+        setGlyphs(newGlyphs, properties: newProperties, characterIndexes: characterIndexes, font: font, forGlyphRange: glyphRange)
+        return glyphRange.length
+    }
+
+    override func drawBackground(forGlyphRange glyphsToShow: NSRange, at origin: NSPoint) {
+        super.drawBackground(forGlyphRange: glyphsToShow, at: origin)
+        guard let storage = textStorage else { return }
+
+        let characters = characterRange(forGlyphRange: glyphsToShow, actualGlyphRange: nil)
+        storage.enumerateAttribute(.markdownBlock, in: characters) { value, range, _ in
+            guard let raw = value as? String, let block = MarkdownBlock(rawValue: raw) else { return }
+            let glyphs = glyphRange(forCharacterRange: range, actualCharacterRange: nil)
+            enumerateLineFragments(forGlyphRange: glyphs) { rect, _, _, _, _ in
+                let line = rect.offsetBy(dx: origin.x, dy: origin.y)
+                switch block {
+                case .code:
+                    MarkdownTheme.blockBackground.setFill()
+                    line.fill()
+                case .quote:
+                    MarkdownTheme.accent.withAlphaComponent(0.7).setFill()
+                    NSRect(x: line.minX + 1, y: line.minY, width: 3, height: line.height).fill()
+                case .rule:
+                    NSColor.white.withAlphaComponent(0.2).setFill()
+                    NSRect(x: line.minX, y: line.midY, width: line.width, height: 1).fill()
+                }
+            }
+        }
+    }
+}
+
+// MARK: - Text View
+
+@MainActor
+final class MarkdownTextView: NSTextView {
+    var baseFontSize: CGFloat = 14
+    private var revealedLine: NSRange?
+    private var isRestyling = false
+
+    /// Builds the text system with the layout manager that hides Markdown syntax.
+    static func make(fontSize: CGFloat, frame: NSRect = .zero) -> MarkdownTextView {
+        let storage = NSTextStorage()
+        let layoutManager = MarkdownLayoutManager()
+        storage.addLayoutManager(layoutManager)
+
+        let container = NSTextContainer(containerSize: NSSize(width: frame.width, height: .greatestFiniteMagnitude))
+        container.widthTracksTextView = true
+        layoutManager.addTextContainer(container)
+
+        let view = MarkdownTextView(frame: frame, textContainer: container)
+        view.baseFontSize = fontSize
+        view.appearance = NSAppearance(named: .darkAqua)
+        view.minSize = NSSize(width: 0, height: frame.height)
+        view.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: .greatestFiniteMagnitude)
+        view.isVerticallyResizable = true
+        view.isHorizontallyResizable = false
+        view.autoresizingMask = [.width]
+        view.textContainerInset = NSSize(width: 4, height: 4)
+        view.drawsBackground = false
+        view.insertionPointColor = .white
+        view.allowsUndo = true
+        view.isRichText = false
+        view.importsGraphics = false
+        view.isAutomaticQuoteSubstitutionEnabled = false
+        view.isAutomaticDashSubstitutionEnabled = false
+        view.isAutomaticLinkDetectionEnabled = false
+        view.linkTextAttributes = [.foregroundColor: MarkdownTheme.link, .underlineStyle: NSUnderlineStyle.single.rawValue, .cursor: NSCursor.pointingHand]
+        view.typingAttributes = MarkdownStyler.baseAttributes(fontSize: fontSize)
+        return view
+    }
+
+    func setMarkdown(_ markdown: String) {
+        let selection = selectedRange()
+        string = markdown
+        undoManager?.removeAllActions()
+        let length = (markdown as NSString).length
+        let location = min(selection.location, length)
+        setSelectedRange(NSRange(location: location, length: min(selection.length, length - location)))
+        restyle()
+    }
+
+    func restyle() {
+        guard let storage = textStorage, !isRestyling, !hasMarkedText() else { return }
+        isRestyling = true
+        defer { isRestyling = false }
+        revealedLine = currentLine()
+        MarkdownStyler.apply(to: storage, fontSize: baseFontSize, revealedLine: revealedLine)
+        typingAttributes = MarkdownStyler.baseAttributes(fontSize: baseFontSize)
+    }
+
+    /// Syntax appears only on the line being edited, so restyle when the caret changes line.
+    func caretMoved() {
+        if currentLine() != revealedLine {
+            restyle()
+        }
+    }
+
+    private func currentLine() -> NSRange? {
+        guard window?.firstResponder === self else { return nil }
+        return (string as NSString).lineRange(for: selectedRange())
+    }
+
+    override func becomeFirstResponder() -> Bool {
+        let accepted = super.becomeFirstResponder()
+        if accepted { DispatchQueue.main.async { [weak self] in self?.restyle() } }
+        return accepted
+    }
+
+    override func resignFirstResponder() -> Bool {
+        let accepted = super.resignFirstResponder()
+        if accepted { DispatchQueue.main.async { [weak self] in self?.restyle() } }
+        return accepted
+    }
+
+    // MARK: Commands
+
+    func apply(_ edit: MarkdownEdit) {
+        let full = NSRange(location: 0, length: (string as NSString).length)
+        guard shouldChangeText(in: full, replacementString: edit.text) else { return }
+        replaceCharacters(in: full, with: edit.text)
+        setSelectedRange(edit.selection)
+        didChangeText()
+    }
+
+    func toggleWrap(_ marker: String) {
+        apply(MarkdownEditing.toggleWrap(text: string, selection: selectedRange(), marker: marker))
+    }
+
+    func toggleLine(_ style: MarkdownLineStyle) {
+        apply(MarkdownEditing.togglePrefix(text: string, selection: selectedRange(), style: style))
+    }
+
+    func insertLink() {
+        apply(MarkdownEditing.insertLink(text: string, selection: selectedRange()))
+    }
+
+    func insertCodeBlock() {
+        apply(MarkdownEditing.insertCodeBlock(text: string, selection: selectedRange()))
+    }
+
+    // MARK: Shortcuts
+
+    override func performKeyEquivalent(with event: NSEvent) -> Bool {
+        // Key equivalents reach every view in the window, focused or not.
+        guard window?.firstResponder === self else { return super.performKeyEquivalent(with: event) }
+
+        let flags = event.modifierFlags.intersection([.command, .shift, .option, .control])
+        let key = event.charactersIgnoringModifiers?.lowercased() ?? ""
+        let command: NSEvent.ModifierFlags = .command
+        let commandShift: NSEvent.ModifierFlags = [.command, .shift]
+        let commandOption: NSEvent.ModifierFlags = [.command, .option]
+        let isCommandOrShift = flags == command || flags == commandShift
+
+        switch true {
+        case flags == command && key == "b": toggleWrap("**")
+        case flags == command && key == "i": toggleWrap("*")
+        case flags == commandShift && (key == "x" || key == "s"): toggleWrap("~~")
+        case isCommandOrShift && (key == "l" || key == "8" || key == "*"): toggleLine(.bullet)
+        case isCommandOrShift && key == "7": toggleLine(.numbered)
+        case flags == commandShift && key == "t": toggleLine(.task)
+        case (flags == commandShift && (key == "." || key == ">" || key == "q" || key == "9")) || (flags == command && key == "'"):
+            toggleLine(.quote)
+        case (flags == commandShift && (key == "c" || key == "k")) || (flags == command && key == "e"):
+            toggleWrap("`")
+        case flags == commandShift && key == "e": insertCodeBlock()
+        case flags == command && key == "k": insertLink()
+        case flags == commandOption && key == "1": toggleLine(.heading(1))
+        case flags == commandOption && key == "2": toggleLine(.heading(2))
+        case flags == commandOption && key == "3": toggleLine(.heading(3))
+        default:
+            return super.performKeyEquivalent(with: event)
+        }
+        return true
+    }
+
+    // MARK: Typing
+
+    private var isCaretInCode: Bool {
+        let location = selectedRange().location
+        return MarkdownParser.spans(in: string).contains {
+            ($0.kind == .codeBlock || $0.kind == .codeFence) && location >= $0.range.location && location <= NSMaxRange($0.range)
+        }
+    }
+
+    /// Space after `[]` or `[x]` turns the line into a checkbox.
+    override func insertText(_ string: Any, replacementRange: NSRange) {
+        let source = self.string as NSString
+        let selection = selectedRange()
+        if string as? String == " ", replacementRange.location == NSNotFound, selection.length == 0, !isCaretInCode {
+            let line = source.lineRange(for: selection)
+            let typed = NSRange(location: line.location, length: selection.location - line.location)
+            if let formatted = MarkdownEditing.autoFormat(beforeCaret: source.substring(with: typed)) {
+                super.insertText(formatted, replacementRange: typed)
+                return
+            }
+        }
+        super.insertText(string, replacementRange: replacementRange)
+    }
+
+    override func insertNewline(_ sender: Any?) {
+        let source = string as NSString
+        let selection = selectedRange()
+        let line = source.lineRange(for: NSRange(location: selection.location, length: 0))
+        let text = source.substring(with: line).trimmingCharacters(in: .newlines)
+
+        if selection.length == 0, let closed = MarkdownEditing.autoCloseFence(text: string, caret: selection.location) {
+            apply(closed)
+            return
+        }
+
+        guard selection.length == 0, !isCaretInCode else {
+            super.insertNewline(sender)
+            return
+        }
+
+        switch MarkdownEditing.newlineAction(forLine: text) {
+        case .none:
+            super.insertNewline(sender)
+        case .insert(let continuation):
+            insertText(continuation, replacementRange: selection)
+        case .exitBlock:
+            let content = NSRange(location: line.location, length: (text as NSString).length)
+            insertText("", replacementRange: content)
+        }
+    }
+
+    /// Backspace right after an empty list or quote marker removes the whole marker.
+    override func deleteBackward(_ sender: Any?) {
+        let source = string as NSString
+        let selection = selectedRange()
+        if selection.length == 0 {
+            let line = source.lineRange(for: selection)
+            let before = source.substring(with: NSRange(location: line.location, length: selection.location - line.location))
+            if !before.isEmpty, MarkdownEditing.newlineAction(forLine: before) == .exitBlock, !isCaretInCode {
+                insertText("", replacementRange: NSRange(location: line.location, length: selection.location - line.location))
+                return
+            }
+        }
+        super.deleteBackward(sender)
+    }
+
+    /// Tab indents a list item to nest it. Everywhere else it types a tab.
+    override func insertTab(_ sender: Any?) {
+        let source = string as NSString
+        let line = source.lineRange(for: selectedRange())
+        let text = source.substring(with: line).trimmingCharacters(in: .newlines)
+        if case .insert = MarkdownEditing.newlineAction(forLine: text), !isCaretInCode {
+            insertText("  ", replacementRange: NSRange(location: line.location, length: 0))
+        } else if MarkdownEditing.newlineAction(forLine: text) == .exitBlock, !isCaretInCode {
+            insertText("  ", replacementRange: NSRange(location: line.location, length: 0))
+        } else {
+            super.insertTab(sender)
+        }
+    }
+
+    override func insertBacktab(_ sender: Any?) {
+        let source = string as NSString
+        let line = source.lineRange(for: selectedRange())
+        if line.length >= 2, source.substring(with: NSRange(location: line.location, length: 2)) == "  " {
+            insertText("", replacementRange: NSRange(location: line.location, length: 2))
+        } else {
+            super.insertBacktab(sender)
+        }
+    }
+
+    // MARK: Checklists
+
+    override func mouseDown(with event: NSEvent) {
+        if let box = taskBox(at: convert(event.locationInWindow, from: nil)) {
+            let source = string as NSString
+            let isChecked = source.substring(with: box).lowercased() == "[x]"
+            let inner = NSRange(location: box.location + 1, length: 1)
+            let replacement = isChecked ? " " : "x"
+            if shouldChangeText(in: inner, replacementString: replacement) {
+                replaceCharacters(in: inner, with: replacement)
+                didChangeText()
+            }
+            return
+        }
+        super.mouseDown(with: event)
+    }
+
+    private func taskBox(at point: NSPoint) -> NSRange? {
+        guard let storage = textStorage, storage.length > 0 else { return nil }
+        let index = characterIndexForInsertion(at: point)
+        for candidate in [index, index - 1] where candidate >= 0 && candidate < storage.length {
+            var range = NSRange()
+            if storage.attribute(.markdownTaskBox, at: candidate, effectiveRange: &range) != nil {
+                return range
+            }
+        }
+        return nil
+    }
+}
+
+// MARK: - SwiftUI Editor
+
 public struct NativeRichTextEditor: View {
     @Binding public var text: String
     public var taskId: UUID?
     public var baseFontSize: CGFloat
     public var minHeight: CGFloat
+    /// Grows to fit the note and lets the surrounding scroll view do the scrolling.
+    public var growsWithContent: Bool
+
+    @State private var contentHeight: CGFloat = 0
 
     public init(
         text: Binding<String>,
         taskId: UUID? = nil,
         baseFontSize: CGFloat = 14,
-        minHeight: CGFloat = 100
+        minHeight: CGFloat = 100,
+        growsWithContent: Bool = false
     ) {
         self._text = text
         self.taskId = taskId
         self.baseFontSize = baseFontSize
         self.minHeight = minHeight
+        self.growsWithContent = growsWithContent
     }
 
     public var body: some View {
-        RichTextRepresentable(text: $text, taskId: taskId, baseFontSize: baseFontSize)
-            .frame(minHeight: minHeight)
-            .padding(8)
-            .background(Color.white.opacity(0.06))
-            .clipShape(RoundedRectangle(cornerRadius: 8))
-            .overlay(
-                RoundedRectangle(cornerRadius: 8)
-                    .strokeBorder(Color.white.opacity(0.12), lineWidth: 0.8)
-            )
+        MarkdownEditorRepresentable(
+            text: $text,
+            taskId: taskId,
+            baseFontSize: baseFontSize,
+            growsWithContent: growsWithContent,
+            onContentHeightChange: { contentHeight = $0 }
+        )
+        .frame(
+            minHeight: minHeight,
+            idealHeight: growsWithContent ? max(minHeight, contentHeight) : nil,
+            maxHeight: growsWithContent ? max(minHeight, contentHeight) : .infinity
+        )
+        .padding(8)
+        .overlay(alignment: .topLeading) {
+            if text.isEmpty {
+                Text("Write in Markdown")
+                    .font(.system(size: baseFontSize))
+                    .foregroundStyle(.tertiary)
+                    .padding(.horizontal, 17)
+                    .padding(.vertical, 12)
+                    .allowsHitTesting(false)
+            }
+        }
+        .background(Color.white.opacity(0.06))
+        .clipShape(RoundedRectangle(cornerRadius: 8))
+        .overlay(
+            RoundedRectangle(cornerRadius: 8)
+                .strokeBorder(Color.white.opacity(0.12), lineWidth: 0.8)
+        )
     }
 }
 
 // MARK: - NSViewRepresentable Wrapper
+
+/// Hands wheel events to the surrounding scroll view when the editor grows to fit its content.
+private final class PassthroughScrollView: NSScrollView {
+    override func scrollWheel(with event: NSEvent) {
+        nextResponder?.scrollWheel(with: event)
+    }
+}
+
 @MainActor
-private struct RichTextRepresentable: NSViewRepresentable {
+private struct MarkdownEditorRepresentable: NSViewRepresentable {
     @Binding var text: String
     var taskId: UUID?
     var baseFontSize: CGFloat
+    var growsWithContent: Bool
+    var onContentHeightChange: (CGFloat) -> Void
 
     func makeCoordinator() -> Coordinator {
         Coordinator(self)
     }
 
     func makeNSView(context: Context) -> NSScrollView {
-        let scrollView = NSScrollView()
+        let scrollView = growsWithContent ? PassthroughScrollView() : NSScrollView()
         scrollView.drawsBackground = false
-        scrollView.hasVerticalScroller = true
+        scrollView.hasVerticalScroller = !growsWithContent
         scrollView.hasHorizontalScroller = false
         scrollView.autohidesScrollers = true
 
-        let contentSize = scrollView.contentSize
-        let textStorage = NSTextStorage()
-        let layoutManager = NSLayoutManager()
-        textStorage.addLayoutManager(layoutManager)
-
-        let textContainer = NSTextContainer(containerSize: NSSize(width: contentSize.width, height: CGFloat.greatestFiniteMagnitude))
-        textContainer.widthTracksTextView = true
-        layoutManager.addTextContainer(textContainer)
-
-        let textView = CocoaRichTextView(frame: NSRect(origin: .zero, size: contentSize), textContainer: textContainer)
-        textView.baseFontSize = baseFontSize
-        textView.appearance = NSAppearance(named: .darkAqua)
-        textView.minSize = NSSize(width: 0, height: contentSize.height)
-        textView.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
-        textView.isVerticallyResizable = true
-        textView.isHorizontallyResizable = false
-        textView.autoresizingMask = [.width]
-        textView.textContainerInset = NSSize(width: 4, height: 4)
-        textView.drawsBackground = false
-        textView.textColor = NSColor.white
-        textView.insertionPointColor = NSColor.white
-        textView.font = NSFont.systemFont(ofSize: baseFontSize)
-        textView.allowsUndo = true
-        textView.isRichText = true
-        textView.isAutomaticQuoteSubstitutionEnabled = false
-        textView.isAutomaticDashSubstitutionEnabled = false
-
+        let textView = MarkdownTextView.make(fontSize: baseFontSize, frame: NSRect(origin: .zero, size: scrollView.contentSize))
         textView.delegate = context.coordinator
+        scrollView.documentView = textView
+
         context.coordinator.textView = textView
         context.coordinator.currentTaskId = taskId
-
-        // Populate initial text
-        context.coordinator.loadTextIntoView(text)
-
-        textView.onContentChange = { [weak coordinator = context.coordinator] attributed in
-            coordinator?.scheduleSyncToBinding(attributed)
-        }
-
-        scrollView.documentView = textView
+        context.coordinator.load(text)
         return scrollView
     }
 
     func updateNSView(_ nsView: NSScrollView, context: Context) {
-        guard let textView = nsView.documentView as? CocoaRichTextView else { return }
-        context.coordinator.parent = self
-        textView.baseFontSize = baseFontSize
-
         let coordinator = context.coordinator
+        coordinator.parent = self
+        coordinator.textView?.baseFontSize = baseFontSize
 
-        // 1. If taskId switched, always reload the new task's notes
         if let taskId, coordinator.currentTaskId != taskId {
             coordinator.currentTaskId = taskId
-            coordinator.isEditing = false
-            coordinator.loadTextIntoView(text)
-            return
+            coordinator.textView?.setSelectedRange(NSRange(location: 0, length: 0))
+            coordinator.load(text)
+        } else if coordinator.lastSyncedText != text {
+            // Someone else changed the note, usually an agent. Every local edit updates
+            // lastSyncedText at once, so this is never your own typing coming back.
+            coordinator.load(text)
         }
-
-        // 2. If the user is currently focused or actively typing in the text view,
-        // NEVER overwrite the text storage to prevent glitching/deleting keystrokes!
-        let isFocused = (textView.window?.firstResponder === textView)
-        if coordinator.isEditing || isFocused {
-            return
-        }
-
-        // 3. Only update when not actively editing and external text changed
-        if !coordinator.isInternalUpdate && coordinator.lastSyncedText != text {
-            coordinator.loadTextIntoView(text)
-        }
+        coordinator.reportContentHeight()
     }
 
     @MainActor
     final class Coordinator: NSObject, NSTextViewDelegate {
-        var parent: RichTextRepresentable
-        weak var textView: CocoaRichTextView?
-        var lastSyncedText: String = ""
-        var isInternalUpdate = false
-        var isEditing = false
+        var parent: MarkdownEditorRepresentable
+        weak var textView: MarkdownTextView?
+        var lastSyncedText = ""
         var currentTaskId: UUID?
-        private var debounceWorkItem: DispatchWorkItem?
+        private var lastReportedHeight: CGFloat = -1
 
-        init(_ parent: RichTextRepresentable) {
+        init(_ parent: MarkdownEditorRepresentable) {
             self.parent = parent
         }
 
-        func textDidBeginEditing(_ notification: Notification) {
-            isEditing = true
-        }
-
-        func textDidEndEditing(_ notification: Notification) {
-            isEditing = false
-            flushPendingSync()
-        }
-
-        func loadTextIntoView(_ string: String) {
-            guard let textView = textView else { return }
-            isInternalUpdate = true
-            defer { isInternalUpdate = false }
-
-            lastSyncedText = string
-            let trimmed = string.trimmingCharacters(in: .whitespacesAndNewlines)
-
-            if trimmed.hasPrefix("{\\rtf") || trimmed.hasPrefix("{\\urtf"),
-               let data = string.data(using: .utf8),
-               let attr = try? NSAttributedString(data: data, options: [.documentType: NSAttributedString.DocumentType.rtf], documentAttributes: nil) {
-                let sanitized = sanitize(attr, baseFontSize: parent.baseFontSize)
-                textView.textStorage?.setAttributedString(sanitized)
-            } else {
-                let attr = NSMutableAttributedString(string: string, attributes: [
-                    .font: NSFont.systemFont(ofSize: parent.baseFontSize),
-                    .foregroundColor: NSColor.white
-                ])
-                textView.textStorage?.setAttributedString(attr)
-            }
-
-            textView.ensureTypingColorIsWhite()
+        func load(_ markdown: String) {
+            lastSyncedText = markdown
+            textView?.setMarkdown(markdown)
         }
 
         func textDidChange(_ notification: Notification) {
-            guard !isInternalUpdate, let textView = textView else { return }
-            textView.ensureTypingColorIsWhite()
-            if let storage = textView.textStorage {
-                scheduleSyncToBinding(storage)
-            }
+            guard let textView else { return }
+            let markdown = textView.string
+            lastSyncedText = markdown
+            parent.text = markdown
+            textView.restyle()
+            reportContentHeight()
         }
 
         func textViewDidChangeSelection(_ notification: Notification) {
-            guard let textView = textView else { return }
-            textView.ensureTypingColorIsWhite()
+            textView?.caretMoved()
         }
 
-        func scheduleSyncToBinding(_ attr: NSAttributedString) {
-            guard !isInternalUpdate else { return }
+        func reportContentHeight() {
+            guard parent.growsWithContent,
+                  let textView,
+                  let layoutManager = textView.layoutManager,
+                  let container = textView.textContainer else { return }
 
-            debounceWorkItem?.cancel()
+            layoutManager.ensureLayout(for: container)
+            let height = ceil(layoutManager.usedRect(for: container).height + textView.textContainerInset.height * 2)
+            guard abs(height - lastReportedHeight) > 0.5 else { return }
+            lastReportedHeight = height
 
-            let sanitized = sanitize(attr, baseFontSize: parent.baseFontSize)
-            let resultString: String
-            if hasRichFormatting(sanitized),
-               let data = try? sanitized.richTextData(for: .rtf),
-               let rtf = String(data: data, encoding: .utf8) {
-                resultString = rtf
-            } else {
-                resultString = sanitized.string
-            }
-            lastSyncedText = resultString
-
-            let workItem = DispatchWorkItem { [weak self] in
-                guard let self = self else { return }
-                self.isInternalUpdate = true
-                self.parent.text = resultString
-                self.isInternalUpdate = false
-            }
-            self.debounceWorkItem = workItem
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.2, execute: workItem)
-        }
-
-        func flushPendingSync() {
-            debounceWorkItem?.cancel()
-            debounceWorkItem = nil
-            if let textView = textView, let storage = textView.textStorage {
-                let sanitized = sanitize(storage, baseFontSize: parent.baseFontSize)
-                let resultString: String
-                if hasRichFormatting(sanitized),
-                   let data = try? sanitized.richTextData(for: .rtf),
-                   let rtf = String(data: data, encoding: .utf8) {
-                    resultString = rtf
-                } else {
-                    resultString = sanitized.string
-                }
-                lastSyncedText = resultString
-                isInternalUpdate = true
-                parent.text = resultString
-                isInternalUpdate = false
+            // Measured during a SwiftUI update, so the state change has to wait for the next pass.
+            let report = parent.onContentHeightChange
+            DispatchQueue.main.async {
+                report(height)
             }
         }
-
-        private func hasRichFormatting(_ attr: NSAttributedString) -> Bool {
-            var hasRich = false
-            let fullRange = NSRange(location: 0, length: attr.length)
-            attr.enumerateAttributes(in: fullRange) { attrs, _, stop in
-                if attrs[.underlineStyle] != nil ||
-                   attrs[.strikethroughStyle] != nil ||
-                   attrs[.backgroundColor] != nil {
-                    hasRich = true
-                    stop.pointee = true
-                    return
-                }
-                if let font = attrs[.font] as? NSFont {
-                    let name = font.fontName.lowercased()
-                    if font.isFixedPitch || name.contains("mono") || name.contains("menlo") || name.contains("courier") {
-                        hasRich = true
-                        stop.pointee = true
-                        return
-                    }
-                    let traits = NSFontManager.shared.traits(of: font)
-                    if traits.contains(.boldFontMask) || traits.contains(.italicFontMask) {
-                        hasRich = true
-                        stop.pointee = true
-                        return
-                    }
-                }
-            }
-            return hasRich
-        }
-
-        private func sanitize(_ attr: NSAttributedString, baseFontSize: CGFloat) -> NSAttributedString {
-            let mutable = NSMutableAttributedString(attributedString: attr)
-            let fullRange = NSRange(location: 0, length: mutable.length)
-            guard fullRange.length > 0 else { return attr }
-
-            // 1. Force white color for all characters that are black, dark, or unassigned (preserving warm code colors)
-            mutable.enumerateAttribute(.foregroundColor, in: fullRange) { value, range, _ in
-                if let color = value as? NSColor {
-                    if isDarkColor(color) {
-                        mutable.addAttribute(.foregroundColor, value: NSColor.white, range: range)
-                    }
-                } else {
-                    mutable.addAttribute(.foregroundColor, value: NSColor.white, range: range)
-                }
-            }
-
-            // 2. Ensure font has at least baseFontSize while preserving monospace, bold, italic traits
-            mutable.enumerateAttribute(.font, in: fullRange) { value, range, _ in
-                if let font = value as? NSFont {
-                    let targetSize = max(baseFontSize, font.pointSize)
-                    let name = font.fontName.lowercased()
-                    let isMono = font.isFixedPitch || name.contains("mono") || name.contains("menlo") || name.contains("courier")
-
-                    if isMono {
-                        let newFont = NSFont.monospacedSystemFont(ofSize: targetSize - 0.5, weight: .medium)
-                        mutable.addAttribute(.font, value: newFont, range: range)
-                    } else {
-                        let traits = NSFontManager.shared.traits(of: font)
-                        var newFont = NSFont.systemFont(ofSize: targetSize)
-                        if traits.contains(.boldFontMask) && traits.contains(.italicFontMask) {
-                            newFont = NSFontManager.shared.convert(newFont, toHaveTrait: [.boldFontMask, .italicFontMask])
-                        } else if traits.contains(.boldFontMask) {
-                            newFont = NSFontManager.shared.convert(newFont, toHaveTrait: .boldFontMask)
-                        } else if traits.contains(.italicFontMask) {
-                            newFont = NSFontManager.shared.convert(newFont, toHaveTrait: .italicFontMask)
-                        }
-                        mutable.addAttribute(.font, value: newFont, range: range)
-                    }
-                } else {
-                    mutable.addAttribute(.font, value: NSFont.systemFont(ofSize: baseFontSize), range: range)
-                }
-            }
-
-            return mutable
-        }
-
-        private func isDarkColor(_ color: NSColor) -> Bool {
-            guard let rgb = color.usingColorSpace(.sRGB) else { return false }
-            return rgb.redComponent < 0.45 && rgb.greenComponent < 0.45 && rgb.blueComponent < 0.45
-        }
-    }
-}
-
-// MARK: - Native Rich Text Viewer (Displays formatted RTF with zero options)
-public struct NativeRichTextViewer: View {
-    public let text: String
-    public var baseFontSize: CGFloat
-    public var textColor: Color
-
-    public init(text: String, baseFontSize: CGFloat = 14, textColor: Color = .white) {
-        self.text = text
-        self.baseFontSize = baseFontSize
-        self.textColor = textColor
-    }
-
-    public var body: some View {
-        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-
-        if (trimmed.hasPrefix("{\\rtf") || trimmed.hasPrefix("{\\urtf")),
-           let data = text.data(using: .utf8),
-           let attr = try? NSAttributedString(data: data, options: [.documentType: NSAttributedString.DocumentType.rtf], documentAttributes: nil) {
-            let sanitized = sanitizeAttributed(attr)
-            RichTextViewer(sanitized)
-                .frame(maxWidth: .infinity, alignment: .leading)
-        } else if !trimmed.isEmpty {
-            Text(LocalizedStringKey(text))
-                .font(.system(size: baseFontSize))
-                .lineSpacing(4)
-                .foregroundStyle(textColor)
-                .frame(maxWidth: .infinity, alignment: .leading)
-        } else {
-            Text("No notes attached.")
-                .font(.system(size: baseFontSize))
-                .foregroundStyle(textColor.opacity(0.45))
-                .frame(maxWidth: .infinity, alignment: .leading)
-        }
-    }
-
-    private func sanitizeAttributed(_ attr: NSAttributedString) -> NSAttributedString {
-        let mutable = NSMutableAttributedString(attributedString: attr)
-        let fullRange = NSRange(location: 0, length: mutable.length)
-        mutable.enumerateAttribute(.foregroundColor, in: fullRange) { val, range, _ in
-            if let c = val as? NSColor {
-                if isDarkColor(c) {
-                    mutable.addAttribute(.foregroundColor, value: NSColor.white, range: range)
-                }
-            } else {
-                mutable.addAttribute(.foregroundColor, value: NSColor.white, range: range)
-            }
-        }
-        return mutable
-    }
-
-    private func isDarkColor(_ color: NSColor) -> Bool {
-        guard let rgb = color.usingColorSpace(.sRGB) else { return false }
-        return rgb.redComponent < 0.45 && rgb.greenComponent < 0.45 && rgb.blueComponent < 0.45
     }
 }
