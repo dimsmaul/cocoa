@@ -21,11 +21,12 @@
    - Board views: Today, Upcoming, Backlog, and Completed.
    - Kanban board view filtered per project list.
    - Subtasks and checklists with progress indicators.
-   - Native rich text notes for deep work contexts.
+   - Markdown notes shown as rich text: headings, lists, clickable checklists, code blocks, quotes, links, and tables. Agents read and write the same text.
    - Local-first persistence (`~/Library/Application Support/Cocoa/tasks.json`).
 4. **Model Context Protocol (MCP) Server**:
-   - Built-in headless Stdio (`Cocoa --mcp`) and HTTP/SSE JSON-RPC 2.0 server.
-   - Exposes 9 native tools to external AI agents (`cocoa_list_tasks`, `cocoa_create_task`, `cocoa_start_timer`, `cocoa_complete_task`, etc.).
+   - Built-in HTTP JSON-RPC 2.0 server, plus a Stdio bridge (`Cocoa --mcp`) that forwards to it, so the Cocoa app must be running.
+   - The HTTP server only accepts connections from this Mac and refuses requests from web browsers. Set `mcpAuthToken` in `settings.json` to also require `Authorization: Bearer <token>`.
+   - Exposes 11 native tools to external AI agents (`cocoa_list_tasks`, `cocoa_get_task`, `cocoa_update_notes`, `cocoa_create_task`, `cocoa_start_timer`, `cocoa_complete_task`, etc.).
    - 1-Click "Apply" integration for Claude Desktop, Cursor IDE, and Antigravity.
 5. **Cloud Sync & Automatic Migration**:
    - Local-first architecture with optional Supabase real-time sync.
