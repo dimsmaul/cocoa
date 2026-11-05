@@ -50,4 +50,7 @@ cat << 'EOF' > "$CONTENTS/Info.plist"
 </plist>
 EOF
 
+# Ad-hoc signature over the whole bundle, so macOS can identify the app for notifications.
+codesign --force --sign - "$APP_DIR"
+
 echo "Cocoa.app built successfully at: $(pwd)/$APP_NAME"
