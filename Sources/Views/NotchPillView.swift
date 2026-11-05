@@ -115,6 +115,7 @@ public struct NotchPillView: View {
                     // CENTER GAP (Behind the physical notch - kept blank/black)
                     Color.clear
                         .frame(width: notchGeo.notchWidth, height: notchGeo.compactIslandHeight)
+                        .contentShape(Rectangle())
 
                     // RIGHT WING (Right of the notch)
                     rightEarView
@@ -131,6 +132,7 @@ public struct NotchPillView: View {
                 .frame(width: notchGeo.compactIslandWidth, height: notchGeo.compactIslandHeight)
             }
         }
+        .contentShape(Rectangle())
     }
 
     // MARK: - Status Color Indicator
