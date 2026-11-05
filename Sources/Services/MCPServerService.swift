@@ -2,6 +2,62 @@ import Foundation
 import Network
 import Observation
 
+/// A request can arrive across several TCP packets, so it is complete only once the headers
+/// and all `Content-Length` bytes are in.
+public enum HTTPRequestFraming {
+    /// Stops a client from growing the buffer forever.
+    public static let maximumSize = 10 * 1024 * 1024
+
+    public static func isComplete(_ data: Data) -> Bool {
+        guard data.count < maximumSize else { return true }
+        let separator = Data("\r\n\r\n".utf8)
+        guard let headerEnd = data.range(of: separator) else { return false }
+
+        let headers = String(decoding: data[data.startIndex..<headerEnd.lowerBound], as: UTF8.self).lowercased()
+        for line in headers.components(separatedBy: "\r\n") where line.hasPrefix("content-length:") {
+            let value = line.dropFirst("content-length:".count).trimmingCharacters(in: .whitespaces)
+            return data.distance(from: headerEnd.upperBound, to: data.endIndex) >= (Int(value) ?? 0)
+        }
+        return true
+    }
+}
+
+/// Listening on loopback keeps the network out, but a web page can still send requests to
+/// localhost, so requests from browsers are refused here.
+public enum HTTPRequestGuard {
+    /// The HTTP status to refuse the request with, or nil when it may proceed.
+    public static func rejectionStatus(forRequestHead head: String, authToken: String) -> Int? {
+        var headers: [String: String] = [:]
+        for line in head.components(separatedBy: "\r\n").dropFirst() {
+            guard let colon = line.firstIndex(of: ":") else { continue }
+            let name = line[..<colon].lowercased()
+            headers[name] = line[line.index(after: colon)...].trimmingCharacters(in: .whitespaces)
+        }
+
+        // Browsers always send Origin on cross-site requests; MCP clients are not browsers.
+        guard headers["origin"] == nil else { return 403 }
+        // A DNS rebinding attack reaches this port with the attacker's own domain as Host.
+        guard let host = headers["host"], isLoopback(host: host) else { return 403 }
+
+        let token = authToken.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !token.isEmpty, headers["authorization"] != "Bearer \(token)" {
+            return 401
+        }
+        return nil
+    }
+
+    private static func isLoopback(host: String) -> Bool {
+        let lowered = host.lowercased()
+        let name: String
+        if lowered.hasPrefix("["), let end = lowered.firstIndex(of: "]") {
+            name = String(lowered[...end])
+        } else {
+            name = lowered.components(separatedBy: ":")[0]
+        }
+        return ["127.0.0.1", "localhost", "[::1]"].contains(name)
+    }
+}
+
 public struct MCPToolDefinition: @unchecked Sendable {
     public let name: String
     public let description: String
@@ -105,13 +161,17 @@ public final class MCPServerService: @unchecked Sendable {
         self.currentPort = targetPort
 
         do {
-            let parameters = NWParameters.tcp
             guard let nwPort = NWEndpoint.Port(rawValue: UInt16(targetPort)) else {
                 print("[MCP] Invalid port: \(targetPort)")
                 return
             }
 
-            let newListener = try NWListener(using: parameters, on: nwPort)
+            let parameters = NWParameters.tcp
+            // Only this Mac can connect. Binding the address is what does this: a loopback
+            // interface requirement alone still leaves the socket listening on every address.
+            parameters.requiredLocalEndpoint = .hostPort(host: "127.0.0.1", port: nwPort)
+
+            let newListener = try NWListener(using: parameters)
             self.listener = newListener
 
             newListener.stateUpdateHandler = { [weak self] state in
@@ -165,14 +225,23 @@ public final class MCPServerService: @unchecked Sendable {
         readHTTPRequest(connection: connection)
     }
 
-    private func readHTTPRequest(connection: NWConnection) {
+    private func readHTTPRequest(connection: NWConnection, received: Data = Data()) {
         connection.receive(minimumIncompleteLength: 1, maximumLength: 65536) { [weak self] data, _, isComplete, error in
-            guard let self, let data, !data.isEmpty else {
-                if isComplete { connection.cancel() }
+            guard let self else { return }
+            var buffer = received
+            if let data {
+                buffer.append(data)
+            }
+            guard !buffer.isEmpty else {
+                if isComplete || error != nil { connection.cancel() }
+                return
+            }
+            guard HTTPRequestFraming.isComplete(buffer) || isComplete || error != nil else {
+                self.readHTTPRequest(connection: connection, received: buffer)
                 return
             }
 
-            let responseData = self.processRawHTTPData(data)
+            let responseData = self.processRawHTTPData(buffer)
             connection.send(content: responseData, completion: .contentProcessed { _ in
                 connection.cancel()
             })
@@ -184,9 +253,9 @@ public final class MCPServerService: @unchecked Sendable {
             return makeHTTPResponse(status: 400, body: "{\"error\": \"Bad Request\"}")
         }
 
-        // Handle CORS Preflight
-        if requestString.hasPrefix("OPTIONS") {
-            return makeCORSResponse()
+        let requestHead = requestString.components(separatedBy: "\r\n\r\n")[0]
+        if let status = HTTPRequestGuard.rejectionStatus(forRequestHead: requestHead, authToken: AppSettings.shared.mcpAuthToken) {
+            return makeHTTPResponse(status: status, body: "{\"error\": \"Request refused\"}")
         }
 
         // Handle GET /status or GET /
@@ -222,29 +291,20 @@ public final class MCPServerService: @unchecked Sendable {
     }
 
     private func makeHTTPResponse(status: Int, body: String) -> Data {
-        let statusText = status == 200 ? "OK" : "Bad Request"
+        let statusText: String
+        switch status {
+        case 200: statusText = "OK"
+        case 401: statusText = "Unauthorized"
+        case 403: statusText = "Forbidden"
+        default: statusText = "Bad Request"
+        }
         let header = """
         HTTP/1.1 \(status) \(statusText)\r
         Content-Type: application/json; charset=utf-8\r
         Content-Length: \(body.utf8.count)\r
-        Access-Control-Allow-Origin: *\r
-        Access-Control-Allow-Headers: Content-Type, Authorization, x-api-key\r
-        Access-Control-Allow-Methods: GET, POST, OPTIONS\r
         Connection: close\r
         \r
         \(body)
-        """
-        return header.data(using: .utf8) ?? Data()
-    }
-
-    private func makeCORSResponse() -> Data {
-        let header = """
-        HTTP/1.1 204 No Content\r
-        Access-Control-Allow-Origin: *\r
-        Access-Control-Allow-Headers: Content-Type, Authorization, x-api-key\r
-        Access-Control-Allow-Methods: GET, POST, OPTIONS\r
-        Connection: close\r
-        \r\n
         """
         return header.data(using: .utf8) ?? Data()
     }
@@ -386,8 +446,18 @@ public final class MCPServerService: @unchecked Sendable {
                 ]
             ],
             [
+                "name": "cocoa_get_task",
+                "description": "Read one task in full: its Markdown notes, subtasks, comments, and details. Use this to read the brief for a task and any earlier feedback.",
+                "inputSchema": [
+                    "type": "object",
+                    "properties": [
+                        "task_id": ["type": "string", "description": "UUID of the task, from cocoa_list_tasks. If omitted, reads the active task."]
+                    ]
+                ]
+            ],
+            [
                 "name": "cocoa_list_tasks",
-                "description": "List tasks from Cocoa. Can filter by board ('Today', 'Upcoming', 'Backlog', 'Completed') or by list name.",
+                "description": "List tasks from Cocoa. Can filter by board ('Today', 'Upcoming', 'Backlog', 'Completed') or by list name. Tasks with notes are marked; use cocoa_get_task to read them.",
                 "inputSchema": [
                     "type": "object",
                     "properties": [
@@ -415,7 +485,7 @@ public final class MCPServerService: @unchecked Sendable {
                         "priority": ["type": "string", "enum": ["Low", "Medium", "High"], "default": "Medium"],
                         "board": ["type": "string", "enum": ["Today", "Upcoming", "Backlog"], "default": "Today"],
                         "list_name": ["type": "string", "description": "Category list name (e.g. 'General')", "default": "General"],
-                        "notes": ["type": "string", "description": "Initial notes or markdown outline for the task"]
+                        "notes": ["type": "string", "description": "Initial notes in GitHub-flavored Markdown"]
                     ]
                 ]
             ],
@@ -484,13 +554,13 @@ public final class MCPServerService: @unchecked Sendable {
             ],
             [
                 "name": "cocoa_update_notes",
-                "description": "Update or append notes/markdown for a specific task or the active task.",
+                "description": "Replace or append to a task's notes. Notes are Markdown and appear formatted in Cocoa straight away: headings, bold, italic, strikethrough, inline code, fenced code blocks, lists, task lists (- [ ]), quotes, links, and tables. Set append to true to add feedback without replacing what the user wrote.",
                 "inputSchema": [
                     "type": "object",
                     "required": ["notes"],
                     "properties": [
                         "task_id": ["type": "string", "description": "UUID of the task. If omitted, updates the active task."],
-                        "notes": ["type": "string", "description": "The notes content in markdown format"],
+                        "notes": ["type": "string", "description": "The notes content in GitHub-flavored Markdown"],
                         "append": ["type": "boolean", "description": "If true, appends to existing notes. If false, replaces existing notes.", "default": false]
                     ]
                 ]
@@ -530,6 +600,20 @@ public final class MCPServerService: @unchecked Sendable {
                     outputText = "No active focus task. Cocoa is idle."
                 }
 
+            case "cocoa_get_task":
+                let targetTaskId: UUID?
+                if let idStr = args["task_id"] as? String {
+                    targetTaskId = UUID(uuidString: idStr)
+                } else {
+                    targetTaskId = taskStore.activeTaskId
+                }
+
+                if let targetTaskId, let task = taskStore.tasks.first(where: { $0.id == targetTaskId }) {
+                    outputText = task.agentSummary
+                } else {
+                    outputText = "Error: Task not found."
+                }
+
             case "cocoa_list_tasks":
                 var filtered = taskStore.tasks
                 if let boardStr = args["board"] as? String, let board = TaskBoard(rawValue: boardStr) {
@@ -545,7 +629,8 @@ public final class MCPServerService: @unchecked Sendable {
                     var lines: [String] = ["Found \(filtered.count) tasks:"]
                     for t in filtered {
                         let check = t.isCompleted ? "[x]" : "[ ]"
-                        lines.append("- \(check) \(t.title) (\(t.estimatedMinutes)m) [\(t.board.rawValue) / \(t.listName)] ID: \(t.id.uuidString)")
+                        let notesMark = t.notes.isEmpty ? "" : " (has notes)"
+                        lines.append("- \(check) \(t.title) (\(t.estimatedMinutes)m) [\(t.board.rawValue) / \(t.listName)]\(notesMark) ID: \(t.id.uuidString)")
                     }
                     outputText = lines.joined(separator: "\n")
                 }
@@ -661,7 +746,8 @@ public final class MCPServerService: @unchecked Sendable {
                 }
 
                 if let targetId = targetTaskId, let task = taskStore.tasks.first(where: { $0.id == targetId }) {
-                    let updated = append ? "\(task.notes)\n\(newNotes)".trimmingCharacters(in: .whitespacesAndNewlines) : newNotes
+                    // A blank line keeps appended feedback from merging into the block above it.
+                    let updated = append ? "\(task.notes)\n\n\(newNotes)".trimmingCharacters(in: .whitespacesAndNewlines) : newNotes
                     taskStore.updateNotes(for: targetId, notes: updated)
                     outputText = "Updated notes for task '\(task.title)'."
                 } else {
@@ -834,26 +920,12 @@ public final class MCPServerService: @unchecked Sendable {
     }
 
     // MARK: - Headless Stdio MCP Server (for Claude Desktop / Cursor CLI)
+    /// A bridge to the running app: the app holds tasks in memory and would overwrite anything
+    /// this process wrote to tasks.json itself, so every tool call goes through the app.
     public static func runStdioServer() {
         let standardInput = FileHandle.standardInput
         let standardOutput = FileHandle.standardOutput
-
-        // Local offline tasks file
-        let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
-        let cocoaDir = appSupport.appendingPathComponent("Cocoa", isDirectory: true)
-        let saveURL = cocoaDir.appendingPathComponent("tasks.json")
-
-        var localTasks: [TaskItem] = []
-        if let data = try? Data(contentsOf: saveURL),
-           let decoded = try? JSONDecoder().decode([TaskItem].self, from: data) {
-            localTasks = decoded
-        }
-
-        func saveLocalTasks() {
-            if let data = try? JSONEncoder().encode(localTasks) {
-                try? data.write(to: saveURL)
-            }
-        }
+        let settings = stdioSettings()
 
         while true {
             guard let lineData = readStdinLine(from: standardInput), !lineData.isEmpty else {
@@ -866,7 +938,6 @@ public final class MCPServerService: @unchecked Sendable {
             }
 
             let id = json["id"]
-            let params = json["params"] as? [String: Any] ?? [:]
 
             var responseObj: [String: Any] = [
                 "jsonrpc": "2.0",
@@ -893,28 +964,20 @@ public final class MCPServerService: @unchecked Sendable {
             case "tools/list":
                 responseObj["result"] = ["tools": MCPServerService.shared.availableToolsList()]
 
-            case "tools/call":
-                let toolName = params["name"] as? String ?? ""
-                let args = params["arguments"] as? [String: Any] ?? [:]
-                var reply = ""
-
-                switch toolName {
-                case "cocoa_list_tasks":
-                    reply = "Total tasks: \(localTasks.count)\n" + localTasks.prefix(10).map { "- \($0.title) (\($0.board.rawValue))" }.joined(separator: "\n")
-                case "cocoa_create_task":
-                    let title = args["title"] as? String ?? "New Task"
-                    let est = args["estimated_minutes"] as? Int ?? 25
-                    let newTask = TaskItem(title: title, estimatedMinutes: est)
-                    localTasks.insert(newTask, at: 0)
-                    saveLocalTasks()
-                    reply = "Created task '\(title)' in Cocoa!"
-                default:
-                    reply = "Tool executed via Cocoa stdio."
+            case "tools/call", "resources/list", "resources/read":
+                if let forwarded = forwardToRunningApp(lineData, port: settings.mcpServerPort, token: settings.mcpAuthToken) {
+                    standardOutput.write(forwarded + Data("\n".utf8))
+                    continue
                 }
-
-                responseObj["result"] = [
-                    "content": [["type": "text", "text": reply]]
-                ]
+                let message = "Cocoa is not reachable on port \(settings.mcpServerPort). Open Cocoa, turn on the MCP server in Settings > AI & MCP, then try again."
+                if method == "tools/call" {
+                    responseObj["result"] = [
+                        "content": [["type": "text", "text": message]],
+                        "isError": true
+                    ]
+                } else {
+                    responseObj["error"] = ["code": -32000, "message": message]
+                }
 
             default:
                 responseObj["error"] = ["code": -32601, "message": "Method not found: \(method)"]
@@ -928,6 +991,41 @@ public final class MCPServerService: @unchecked Sendable {
                 }
             }
         }
+    }
+
+    /// Reads the file directly, because AppSettings.shared rewrites settings.json when it loads.
+    private static func stdioSettings() -> AppSettingsPayload {
+        let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
+        let settingsURL = appSupport.appendingPathComponent("Cocoa/settings.json")
+        guard let data = try? Data(contentsOf: settingsURL),
+              let settings = try? JSONDecoder().decode(AppSettingsPayload.self, from: data) else {
+            return AppSettingsPayload()
+        }
+        return settings
+    }
+
+    private static func forwardToRunningApp(_ body: Data, port: Int, token: String) -> Data? {
+        guard let url = URL(string: "http://127.0.0.1:\(port)/mcp") else { return nil }
+        var request = URLRequest(url: url, timeoutInterval: 10)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        let trimmedToken = token.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !trimmedToken.isEmpty {
+            request.setValue("Bearer \(trimmedToken)", forHTTPHeaderField: "Authorization")
+        }
+        request.httpBody = body
+
+        final class Result: @unchecked Sendable { var data: Data? }
+        let result = Result()
+        let finished = DispatchSemaphore(value: 0)
+        URLSession.shared.dataTask(with: request) { data, response, _ in
+            if (response as? HTTPURLResponse)?.statusCode == 200 {
+                result.data = data
+            }
+            finished.signal()
+        }.resume()
+        finished.wait()
+        return result.data
     }
 
     private static func readStdinLine(from fileHandle: FileHandle) -> Data? {
