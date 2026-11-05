@@ -10,17 +10,20 @@ let package = Package(
         .executable(name: "Cocoa", targets: ["CocoaApp"])
     ],
     dependencies: [
-        .package(url: "https://github.com/supabase/supabase-swift.git", from: "2.0.0"),
-        .package(url: "https://github.com/danielsaidi/RichTextKit.git", from: "1.1.0")
+        .package(url: "https://github.com/supabase/supabase-swift.git", from: "2.0.0")
     ],
     targets: [
         .executableTarget(
             name: "CocoaApp",
             dependencies: [
-                .product(name: "Supabase", package: "supabase-swift"),
-                .product(name: "RichTextKit", package: "RichTextKit")
+                .product(name: "Supabase", package: "supabase-swift")
             ],
             path: "Sources"
+        ),
+        .testTarget(
+            name: "CocoaAppTests",
+            dependencies: ["CocoaApp"],
+            path: "Tests"
         )
     ]
 )

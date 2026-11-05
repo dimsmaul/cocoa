@@ -1,5 +1,5 @@
 {
-  "originHash" : "5dcc418d0cec85d23ac2725820714bf9fe5446818162be9fb16cdd8ac7d49e49",
+  "originHash" : "06da3e1175e1845110130807a4cd78eae41968d19835387c6e00a5c00e1d7e80",
   "pins" : [
     {
       "identity" : "opentelemetry-swift-core",
@@ -8,15 +8,6 @@
       "state" : {
         "revision" : "c6fcee77cfc21ba400366f12475217c7b6e1d605",
         "version" : "2.6.0"
-      }
-    },
-    {
-      "identity" : "richtextkit",
-      "kind" : "remoteSourceControl",
-      "location" : "https://github.com/danielsaidi/RichTextKit.git",
-      "state" : {
-        "revision" : "8aa44cfa645404ad84e52e3ab7723ecf4b82f92b",
-        "version" : "1.2.0"
       }
     },
     {
