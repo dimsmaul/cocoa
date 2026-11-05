@@ -3,71 +3,61 @@ import SwiftUI
 public struct TaskDatePickerButton: View {
     public let task: TaskItem
     @Bindable public var taskStore: TaskStore
-    public var width: CGFloat = 130
+    public var width: CGFloat? = nil
 
     @State private var isShowingPopover: Bool = false
     @State private var displayedMonth: Date = Date()
     @State private var isHovered: Bool = false
 
-    public init(task: TaskItem, taskStore: TaskStore, width: CGFloat = 130) {
+    public init(task: TaskItem, taskStore: TaskStore, width: CGFloat? = nil) {
         self.task = task
         self.taskStore = taskStore
         self.width = width
     }
 
-    private var currentDueDate: Date {
-        task.dueDate ?? Date()
+    private var dateTitle: String {
+        task.formattedDueDate ?? "No Date"
     }
 
-    private var dateTitle: String {
+    private var dateColor: Color {
+        guard let due = task.dueDate else { return .secondary }
         let cal = Calendar.current
-        if cal.isDateInToday(currentDueDate) {
-            return "Today"
-        } else if cal.isDateInTomorrow(currentDueDate) {
-            return "Tomorrow"
+        if cal.isDateInToday(due) {
+            return .green
+        } else if due < cal.startOfDay(for: Date()) {
+            return .red
         } else {
-            let formatter = DateFormatter()
-            formatter.dateFormat = "MMM d, yyyy"
-            return formatter.string(from: currentDueDate)
+            return .orange
         }
     }
 
     public var body: some View {
         Button(action: {
-            displayedMonth = currentDueDate
+            displayedMonth = task.dueDate ?? Date()
             isShowingPopover.toggle()
         }) {
-            HStack(spacing: 0) {
+            HStack(spacing: 8) {
+                Image(systemName: "calendar")
+                    .font(.system(size: 12))
+                    .foregroundStyle(dateColor)
+
                 Text(dateTitle)
-                    .font(.system(size: 13))
+                    .font(.system(size: 13, weight: .regular))
                     .foregroundStyle(.primary)
-                    .lineLimit(1)
-                    .padding(.leading, 8)
 
                 Spacer()
-
-                // Native macOS pop-up button blue badge with double chevrons
-                ZStack {
-                    RoundedRectangle(cornerRadius: 4, style: .continuous)
-                        .fill(Color.accentColor)
-                        .frame(width: 17, height: 17)
-
-                    Image(systemName: "chevron.up.chevron.down")
-                        .font(.system(size: 8, weight: .bold))
-                        .foregroundStyle(.white)
-                }
-                .padding(.trailing, 2)
             }
-            .frame(width: width, height: 21)
-            .background(Color(nsColor: .controlColor))
-            .clipShape(RoundedRectangle(cornerRadius: 5.5, style: .continuous))
-            .opacity(isHovered ? 0.92 : 1.0)
+            .padding(.vertical, 4)
+            .padding(.horizontal, 6)
+            .frame(width: width)
+            .background(isHovered ? Color.white.opacity(0.06) : Color.clear)
+            .clipShape(RoundedRectangle(cornerRadius: 6))
         }
         .buttonStyle(.plain)
         .onHover { isHovered = $0 }
         .popover(isPresented: $isShowingPopover, arrowEdge: .bottom) {
             DatePickerCalendarPopover(
-                selectedDate: currentDueDate,
+                selectedDate: task.dueDate,
                 displayedMonth: $displayedMonth,
                 onSelectDate: { date in
                     taskStore.setDueDate(for: task.id, date: date)
@@ -80,9 +70,9 @@ public struct TaskDatePickerButton: View {
 
 // MARK: - Minimal Dark Calendar Popover
 private struct DatePickerCalendarPopover: View {
-    let selectedDate: Date
+    let selectedDate: Date?
     @Binding var displayedMonth: Date
-    let onSelectDate: (Date) -> Void
+    let onSelectDate: (Date?) -> Void
 
     private let calendar = Calendar.current
     private let columns = Array(repeating: GridItem(.fixed(32), spacing: 6), count: 7)
@@ -120,7 +110,7 @@ private struct DatePickerCalendarPopover: View {
 
     var body: some View {
         VStack(spacing: 12) {
-            // Quick Presets: Today, Tomorrow, Next Week
+            // Quick Presets: Today, Tomorrow, Clear
             HStack(spacing: 8) {
                 presetButton(title: "Today") {
                     onSelectDate(Date())
@@ -129,9 +119,10 @@ private struct DatePickerCalendarPopover: View {
                     let tomorrow = calendar.date(byAdding: .day, value: 1, to: Date()) ?? Date()
                     onSelectDate(tomorrow)
                 }
-                presetButton(title: "Next Week") {
-                    let nextWeek = calendar.date(byAdding: .day, value: 7, to: Date()) ?? Date()
-                    onSelectDate(nextWeek)
+                if selectedDate != nil {
+                    presetButton(title: "Clear") {
+                        onSelectDate(nil)
+                    }
                 }
             }
 
@@ -192,7 +183,7 @@ private struct DatePickerCalendarPopover: View {
             LazyVGrid(columns: columns, spacing: 5) {
                 ForEach(0..<daysInDisplayedMonth.count, id: \.self) { i in
                     if let date = daysInDisplayedMonth[i] {
-                        let isSelected = calendar.isDate(date, inSameDayAs: selectedDate)
+                        let isSelected = selectedDate != nil && calendar.isDate(date, inSameDayAs: selectedDate!)
                         let isToday = calendar.isDateInToday(date)
                         let dayNum = "\(calendar.component(.day, from: date))"
 
