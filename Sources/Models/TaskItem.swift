@@ -135,6 +135,10 @@ public struct TaskItem: Identifiable, Codable, Equatable, Sendable {
     public var createdAt: Date
     public var board: TaskBoard
     public var dueDate: Date?
+    public var recurrence: TaskRecurrence?
+    public var reminderAt: Date?
+    /// Next occurrence created when this task was completed, kept so reopening can undo it.
+    public var spawnedOccurrenceId: UUID?
 
     public init(
         id: UUID = UUID(),
@@ -150,8 +154,14 @@ public struct TaskItem: Identifiable, Codable, Equatable, Sendable {
         completedAt: Date? = nil,
         createdAt: Date = Date(),
         board: TaskBoard = .today,
-        dueDate: Date? = nil
+        dueDate: Date? = nil,
+        recurrence: TaskRecurrence? = nil,
+        reminderAt: Date? = nil,
+        spawnedOccurrenceId: UUID? = nil
     ) {
+        self.recurrence = recurrence
+        self.reminderAt = reminderAt
+        self.spawnedOccurrenceId = spawnedOccurrenceId
         self.id = id
         self.title = title
         self.notes = notes
@@ -179,13 +189,14 @@ public struct TaskItem: Identifiable, Codable, Equatable, Sendable {
     enum CodingKeys: String, CodingKey {
         case id, title, notes, estimatedMinutes, timeSpentSeconds, isCompleted, priority
         case listName, subtasks, comments, completedAt, createdAt, board, dueDate
+        case recurrence, reminderAt, spawnedOccurrenceId
     }
 
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         self.id = try container.decode(UUID.self, forKey: .id)
         self.title = try container.decode(String.self, forKey: .title)
-        self.notes = try container.decodeIfPresent(String.self, forKey: .notes) ?? ""
+        self.notes = NotesFormat.normalized(try container.decodeIfPresent(String.self, forKey: .notes) ?? "")
         self.estimatedMinutes = try container.decodeIfPresent(Int.self, forKey: .estimatedMinutes) ?? 25
         self.timeSpentSeconds = try container.decodeIfPresent(Int.self, forKey: .timeSpentSeconds) ?? 0
         self.isCompleted = try container.decodeIfPresent(Bool.self, forKey: .isCompleted) ?? false
@@ -197,6 +208,32 @@ public struct TaskItem: Identifiable, Codable, Equatable, Sendable {
         self.createdAt = try container.decodeIfPresent(Date.self, forKey: .createdAt) ?? Date()
         self.board = try container.decodeIfPresent(TaskBoard.self, forKey: .board) ?? .today
         self.dueDate = try container.decodeIfPresent(Date.self, forKey: .dueDate)
+        // An unreadable rule must not fail the whole tasks file and lose every task on the next save.
+        self.recurrence = (try? container.decodeIfPresent(TaskRecurrence.self, forKey: .recurrence)) ?? nil
+        self.reminderAt = try container.decodeIfPresent(Date.self, forKey: .reminderAt)
+        self.spawnedOccurrenceId = try container.decodeIfPresent(UUID.self, forKey: .spawnedOccurrenceId)
+    }
+
+    /// Inbox is the working view of overdue, today, and upcoming tasks. Backlog has its own menu.
+    public var isInInbox: Bool {
+        !isCompleted && board != .backlog
+    }
+
+    /// The Today group in Inbox and the Today tab in Tower. A task with no date counts as
+    /// today unless it is Upcoming, so newly captured tasks are always visible.
+    public func isInTodayGroup(now: Date = Date(), calendar: Calendar = .current) -> Bool {
+        guard isInInbox else { return false }
+        if let dueDate {
+            return calendar.isDate(dueDate, inSameDayAs: now)
+        }
+        return board == .today || board == .inbox
+    }
+
+    /// Quick capture always lands in the Inbox, whatever board the main window is showing.
+    public static func quickCapture(title: String) -> TaskItem? {
+        let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+        return TaskItem(title: trimmed, listName: "General", board: .inbox)
     }
 
     public var formattedDueDate: String? {

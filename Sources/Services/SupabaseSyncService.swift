@@ -154,7 +154,7 @@ public struct SupabaseTaskDTO: Codable, Sendable {
         return TaskItem(
             id: id,
             title: title,
-            notes: notes,
+            notes: NotesFormat.normalized(notes),
             estimatedMinutes: estimated_minutes,
             timeSpentSeconds: time_spent_seconds,
             isCompleted: is_completed,
