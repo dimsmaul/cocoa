@@ -23,6 +23,8 @@ public final class WindowManager: NSObject, NSWindowDelegate {
     private var lastMainWindowFrame: NSRect?
     private var lastTowerFrame: NSRect?
     private var isTransitioning = false
+    private var quickCapture: QuickCaptureController?
+    private var dayChangeObserver: NSObjectProtocol?
 
     public var currentMode: CocoaUIMode = .mainApp
 
@@ -37,9 +39,62 @@ public final class WindowManager: NSObject, NSWindowDelegate {
         setupMainWindow()
         setupNotchPanel()
         setupFloatingWindow()
+        setupQuickCapture()
+        setupReminders()
+        setupDayRollover()
 
         // PRIMARY FOCUS: Open the Main App Window by default!
         showMode(.mainApp)
+    }
+
+    // MARK: - Quick Capture, Reminders & Day Rollover
+    private func setupQuickCapture() {
+        let controller = QuickCaptureController(taskStore: taskStore, timerManager: timerManager)
+        quickCapture = controller
+        GlobalHotkeyService.shared.onPressed = { [weak controller] in
+            controller?.toggle()
+        }
+        applyQuickCaptureShortcut()
+    }
+
+    /// Returns false when macOS refuses the shortcut, usually because another app holds it.
+    @discardableResult
+    public func applyQuickCaptureShortcut() -> Bool {
+        let settings = AppSettings.shared
+        guard settings.isQuickCaptureEnabled else {
+            GlobalHotkeyService.shared.unregister()
+            return true
+        }
+        return GlobalHotkeyService.shared.register(settings.quickCaptureShortcut)
+    }
+
+    private func setupReminders() {
+        let reminders = ReminderService.shared
+        reminders.onOpenTask = { [weak self] id in
+            guard let self, let task = self.taskStore.tasks.first(where: { $0.id == id }) else { return }
+            // Selecting only: making it the active task would move a running timer onto it.
+            self.taskStore.selectedTaskId = id
+            self.taskStore.selectedSection = .board(task.board == .backlog ? .backlog : .inbox)
+            self.showMode(.mainApp)
+        }
+        taskStore.onTasksSaved = { tasks in
+            Task { @MainActor in
+                ReminderService.shared.sync(tasks: tasks)
+            }
+        }
+        reminders.start(tasks: taskStore.tasks)
+    }
+
+    private func setupDayRollover() {
+        dayChangeObserver = NotificationCenter.default.addObserver(
+            forName: .NSCalendarDayChanged,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated {
+                self?.taskStore.rollOverDueTasks()
+            }
+        }
     }
 
     // MARK: - Menu Bar Status Item
@@ -185,7 +240,7 @@ public final class WindowManager: NSObject, NSWindowDelegate {
     private func setupFloatingWindow() {
         let screenFrame = NSScreen.main?.visibleFrame ?? NSRect(x: 100, y: 100, width: 1200, height: 800)
         let windowWidth: CGFloat = 330
-        let windowHeight: CGFloat = 560
+        let windowHeight = FloatingTowerView.height
 
         let x = screenFrame.maxX - windowWidth - 40
         let y = screenFrame.maxY - windowHeight - 40
@@ -290,6 +345,7 @@ public final class WindowManager: NSObject, NSWindowDelegate {
         floatingWindow?.orderOut(nil)
 
         isTransitioning = true
+        main.minSize = .zero
         NSAnimationContext.runAnimationGroup { context in
             context.duration = 0.30
             context.timingFunction = CAMediaTimingFunction(controlPoints: 0.25, 0.1, 0.25, 1.0)
@@ -305,6 +361,7 @@ public final class WindowManager: NSObject, NSWindowDelegate {
             self?.isTransitioning = false
             main.orderOut(nil)
             main.alphaValue = 1.0
+            main.minSize = NSSize(width: 850, height: 500)
             if let lastFrame = self?.lastMainWindowFrame {
                 main.setFrame(lastFrame, display: false)
             }
@@ -331,6 +388,7 @@ public final class WindowManager: NSObject, NSWindowDelegate {
         notchPanel?.orderOut(nil)
 
         isTransitioning = true
+        main.minSize = .zero
         NSAnimationContext.runAnimationGroup { context in
             context.duration = 0.28
             context.timingFunction = CAMediaTimingFunction(controlPoints: 0.25, 0.1, 0.25, 1.0)
@@ -344,6 +402,7 @@ public final class WindowManager: NSObject, NSWindowDelegate {
             self?.isTransitioning = false
             main.orderOut(nil)
             main.alphaValue = 1.0
+            main.minSize = NSSize(width: 850, height: 500)
             if let lastFrame = self?.lastMainWindowFrame {
                 main.setFrame(lastFrame, display: false)
             }
@@ -379,6 +438,7 @@ public final class WindowManager: NSObject, NSWindowDelegate {
         )
 
         isTransitioning = true
+        main.minSize = .zero
         main.setFrame(startFrame, display: false)
         main.alphaValue = 0.0
         main.makeKeyAndOrderFront(nil)
@@ -396,6 +456,7 @@ public final class WindowManager: NSObject, NSWindowDelegate {
             main.animator().setFrame(targetFrame, display: true)
         } completionHandler: { [weak self] in
             self?.isTransitioning = false
+            main.minSize = NSSize(width: 850, height: 500)
             self?.notchPanel?.orderOut(nil)
             self?.notchPanel?.alphaValue = 1.0
             NSApp.activate(ignoringOtherApps: true)
@@ -422,6 +483,7 @@ public final class WindowManager: NSObject, NSWindowDelegate {
         self.lastMainWindowFrame = targetFrame
 
         isTransitioning = true
+        main.minSize = .zero
         main.setFrame(tower.frame, display: false)
         main.alphaValue = 0.0
         main.makeKeyAndOrderFront(nil)
@@ -438,6 +500,7 @@ public final class WindowManager: NSObject, NSWindowDelegate {
             main.animator().setFrame(targetFrame, display: true)
         } completionHandler: { [weak self] in
             self?.isTransitioning = false
+            main.minSize = NSSize(width: 850, height: 500)
             tower.orderOut(nil)
             tower.alphaValue = 1.0
             NSApp.activate(ignoringOtherApps: true)

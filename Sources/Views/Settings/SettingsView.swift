@@ -5,6 +5,7 @@ public enum SettingsCategory: String, CaseIterable, Identifiable, Sendable {
     case database = "Database"
     case timer = "Focus Timer"
     case notch = "Dynamic Island"
+    case shortcuts = "Shortcuts"
     case aiAndMcp = "AI & MCP"
     case about = "About"
 
@@ -15,6 +16,7 @@ public enum SettingsCategory: String, CaseIterable, Identifiable, Sendable {
         case .database: return "cylinder.split.1x2"
         case .timer: return "timer"
         case .notch: return "menubar.arrow.up.rectangle"
+        case .shortcuts: return "keyboard"
         case .aiAndMcp: return "sparkles"
         case .about: return "info.circle"
         }
@@ -25,6 +27,7 @@ public enum SettingsCategory: String, CaseIterable, Identifiable, Sendable {
         case .database: return .blue
         case .timer: return .orange
         case .notch: return .purple
+        case .shortcuts: return .teal
         case .aiAndMcp: return Color(red: 0.65, green: 0.35, blue: 0.98)
         case .about: return .gray
         }
@@ -59,6 +62,9 @@ public struct SettingsView: View {
     @State private var expandedTool: String? = nil
     @State private var configRefreshID = UUID()
 
+    // Shortcut state
+    @State private var shortcutError: String? = nil
+
     public init(taskStore: TaskStore) {
         self.taskStore = taskStore
         self._mcpPortText = State(initialValue: String(AppSettings.shared.mcpServerPort))
@@ -92,6 +98,8 @@ public struct SettingsView: View {
                             timerSettingsView
                         case .notch:
                             notchSettingsView
+                        case .shortcuts:
+                            shortcutsSettingsView
                         case .aiAndMcp:
                             aiAndMCPSettingsView
                         case .about:
@@ -225,8 +233,79 @@ public struct SettingsView: View {
         case .database: return "Configure Supabase multi-device sync or offline storage."
         case .timer: return "Customize Pomodoro durations, breaks, and audio cues."
         case .notch: return "Tailor MacBook camera notch integration and interaction behavior."
+        case .shortcuts: return "Customize global keyboard shortcuts."
         case .aiAndMcp: return "MCP server & AI assistant provider settings."
         case .about: return "Cocoa version, system statistics, and keyboard shortcuts."
+        }
+    }
+
+    // MARK: - Shortcuts View
+    private var shortcutsSettingsView: some View {
+        settingsCard {
+            VStack(alignment: .leading, spacing: 12) {
+                cardSectionTitle("QUICK CAPTURE", icon: "tray.and.arrow.down.fill")
+
+                Text("Press this shortcut from any app to add a task to your Inbox.")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+
+                Toggle("Enable Quick Capture", isOn: Binding(
+                    get: { settings.isQuickCaptureEnabled },
+                    set: { enabled in
+                        settings.isQuickCaptureEnabled = enabled
+                        shortcutError = WindowManager.shared.applyQuickCaptureShortcut()
+                            ? nil
+                            : "\(settings.quickCaptureShortcut.displayString) is already in use. Choose a different shortcut."
+                    }
+                ))
+                .toggleStyle(.switch)
+                .font(.system(size: 12))
+
+                if settings.isQuickCaptureEnabled {
+                    HStack(alignment: .top) {
+                        Text("Shortcut")
+                            .font(.system(size: 12))
+
+                        Spacer()
+
+                        ShortcutRecorderView(
+                            shortcut: settings.quickCaptureShortcut,
+                            onRecord: updateQuickCaptureShortcut,
+                            onRecordingChanged: { isRecording in
+                                if isRecording {
+                                    GlobalHotkeyService.shared.unregister()
+                                } else {
+                                    WindowManager.shared.applyQuickCaptureShortcut()
+                                }
+                            }
+                        )
+
+                        Button("Reset") {
+                            updateQuickCaptureShortcut(.defaultQuickCapture)
+                        }
+                        .buttonStyle(.bordered)
+                        .disabled(settings.quickCaptureShortcut == .defaultQuickCapture)
+                    }
+                }
+
+                if let shortcutError {
+                    Label(shortcutError, systemImage: "exclamationmark.triangle.fill")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.orange)
+                }
+            }
+        }
+    }
+
+    private func updateQuickCaptureShortcut(_ shortcut: HotkeyShortcut) {
+        let previous = settings.quickCaptureShortcut
+        settings.quickCaptureShortcut = shortcut
+        if WindowManager.shared.applyQuickCaptureShortcut() {
+            shortcutError = nil
+        } else {
+            settings.quickCaptureShortcut = previous
+            WindowManager.shared.applyQuickCaptureShortcut()
+            shortcutError = "\(shortcut.displayString) is already in use. Choose a different shortcut."
         }
     }
 
@@ -387,7 +466,7 @@ public struct SettingsView: View {
             // Exposed Tools Inspector
             settingsCard {
                 VStack(alignment: .leading, spacing: 12) {
-                    cardSectionTitle("EXPOSED MCP TOOLS & CAPABILITIES (9)", icon: "wrench.and.screwdriver")
+                    cardSectionTitle("EXPOSED MCP TOOLS & CAPABILITIES (\(mcpService.availableToolsList().count))", icon: "wrench.and.screwdriver")
 
                     Text("External AI agents can discover and execute these native tools to manage your Cocoa session:")
                         .font(.system(size: 11))
@@ -1311,12 +1390,18 @@ public struct SettingsView: View {
                     cardSectionTitle("KEYBOARD SHORTCUTS", icon: "keyboard.fill")
 
                     VStack(spacing: 6) {
+                        if settings.isQuickCaptureEnabled {
+                            shortcutRow(settings.quickCaptureShortcut.displayString, desc: "Quick Capture from any app")
+                        }
                         shortcutRow("Cmd + 1", desc: "Open Main Dashboard")
                         shortcutRow("Cmd + 2", desc: "Focus in Notch Pill (Dynamic Island)")
                         shortcutRow("Cmd + 3", desc: "Open Floating Tower Mode")
                         shortcutRow("Cmd + ,", desc: "Open Cocoa Settings")
-                        shortcutRow("Cmd + B / I / U", desc: "Rich Notes Bold / Italic / Underline")
-                        shortcutRow("Cmd + Shift + C", desc: "Monospace Code chip in Notes")
+                        shortcutRow("⌘B / ⌘I / ⇧⌘X", desc: "Notes: Bold / Italic / Strikethrough")
+                        shortcutRow("⌥⌘1 / ⌥⌘2 / ⌥⌘3", desc: "Notes: Heading 1 / 2 / 3")
+                        shortcutRow("⌘L / ⌘7 / ⇧⌘T", desc: "Notes: Bullet / Numbered / Checklist")
+                        shortcutRow("⌘' / ⌘K", desc: "Notes: Quote / Link")
+                        shortcutRow("⌘E / ⇧⌘E", desc: "Notes: Inline Code / Code Block")
                     }
                 }
             }
